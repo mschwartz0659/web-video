@@ -1,0 +1,1531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>USPSA Shot Timer Analyzer - ML Powered</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-900 text-white p-6">
+    <div id="root" class="max-w-7xl mx-auto">
+        <div class="mb-8">
+            <h1 class="text-3xl font-bold mb-2">🤖 USPSA Shot Timer Analyzer - ML Powered</h1>
+            <p class="text-slate-400">Machine learning-based shot detection with manual editing</p>
+        </div>
+
+        <div id="error" class="hidden mb-4 p-4 bg-red-900/50 border border-red-700 rounded-lg"></div>
+
+        <!-- Video Export Progress Modal -->
+        <div id="export-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50">
+            <div class="bg-slate-800 rounded-lg p-6 max-w-md w-full mx-4">
+                <h3 class="text-xl font-bold mb-4">Exporting Video...</h3>
+                <div class="mb-4">
+                    <div class="w-full bg-slate-700 rounded-full h-3">
+                        <div id="export-progress-bar" class="bg-purple-600 h-3 rounded-full transition-all duration-300" style="width: 0%"></div>
+                    </div>
+                    <p class="text-sm text-slate-400 mt-2" id="export-progress-text">Preparing...</p>
+                </div>
+                <p class="text-xs text-slate-500">This may take a few minutes depending on video length.</p>
+            </div>
+        </div>
+
+        <div id="upload-section" class="border-2 border-dashed border-slate-600 rounded-lg p-12 text-center">
+            <svg class="mx-auto mb-4 text-slate-400" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="17 8 12 3 7 8"></polyline>
+                <line x1="12" y1="3" x2="12" y2="15"></line>
+            </svg>
+            <h3 class="text-xl mb-2">Upload Your Stage Video</h3>
+            <p class="text-slate-400 mb-4">ML model will automatically detect all shots</p>
+
+            <!-- Detection Settings -->
+            <div class="max-w-md mx-auto mb-6 p-4 bg-slate-800 rounded-lg">
+                <div class="mb-4">
+                    <label class="block text-sm font-medium mb-2 text-left">
+                        Detection Threshold: <span id="threshold-value" class="text-blue-400">0.30</span>
+                    </label>
+                    <input type="range" id="threshold-slider" min="0.1" max="0.9" step="0.05" value="0.30"
+                           class="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer"
+                           oninput="document.getElementById('threshold-value').textContent = parseFloat(this.value).toFixed(2)">
+                    <div class="flex justify-between text-xs text-slate-400 mt-1">
+                        <span>More sensitive (0.1)</span>
+                        <span>Less sensitive (0.9)</span>
+                    </div>
+                    <p class="text-xs text-slate-400 mt-2 text-left">Lower = detects more shots (may include false positives). Higher = fewer detections (may miss some shots).</p>
+                </div>
+            </div>
+
+            <input type="file" accept="video/*" id="video-input" class="hidden">
+            <label for="video-input" class="inline-block px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg cursor-pointer transition">
+                Select Video
+            </label>
+            <div id="processing" class="hidden mt-4">
+                <div class="text-blue-400 mb-2">Processing video with ML model...</div>
+                <div class="w-full bg-slate-700 rounded-full h-2">
+                    <div id="progress-bar" class="bg-blue-600 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+                </div>
+                <p class="text-sm text-slate-400 mt-2" id="progress-text">Uploading...</p>
+            </div>
+        </div>
+
+        <div id="analysis-section" class="hidden space-y-6">
+            <div class="bg-slate-800 rounded-lg p-4">
+                <!-- Compact control bar above video -->
+                <div class="flex items-center justify-between mb-3 pb-3 border-b border-slate-700">
+                    <div class="flex gap-3 items-center flex-wrap">
+                        <div class="flex gap-1 items-center">
+                            <span class="text-slate-400 text-xs">Shot Stream:</span>
+                            <button onclick="setStreamerPosition('top')" id="pos-top" class="px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-xs transition">Top</button>
+                            <button onclick="setStreamerPosition('bottom')" id="pos-bottom" class="px-2 py-1 bg-blue-600 hover:bg-blue-700 rounded text-xs transition">Bottom</button>
+                            <button onclick="setStreamerPosition('left')" id="pos-left" class="px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-xs transition">Left</button>
+                            <button onclick="setStreamerPosition('right')" id="pos-right" class="px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-xs transition">Right</button>
+                        </div>
+                        <div class="h-4 w-px bg-slate-600"></div>
+                        <div class="flex gap-2 items-center">
+                            <span class="px-2 py-1 bg-green-900/50 text-green-400 rounded text-xs font-medium">
+                                <span id="ml-shot-count">0</span> shots
+                            </span>
+                            <span id="edit-indicator" class="hidden px-2 py-1 bg-yellow-900/50 text-yellow-400 rounded text-xs font-medium">
+                                ✏️ Edited
+                            </span>
+                        </div>
+                    </div>
+                    <div class="flex gap-2">
+                        <button onclick="exportData()" class="px-3 py-1.5 bg-green-600 hover:bg-green-700 rounded text-xs font-medium transition">
+                            Export CSV
+                        </button>
+                        <button onclick="exportVideo()" id="export-video-btn" class="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 rounded text-xs font-medium transition">
+                            Export Video
+                        </button>
+                        <button onclick="reset()" class="px-3 py-1.5 bg-red-600 hover:bg-red-700 rounded text-xs font-medium transition">
+                            New Video
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Video player with controls -->
+                <div class="flex justify-center">
+                    <div class="inline-block">
+                        <div id="video-wrapper" class="relative inline-block">
+                            <video id="video-player" class="rounded-t max-h-96"></video>
+                            <!-- Shot Streamer - Position dynamically controlled -->
+                            <div id="shot-overlay" class="absolute h-12 overflow-hidden pointer-events-none">
+                                <div id="ticker-container" class="flex gap-2 h-full items-center px-3 bg-gradient-to-r from-transparent via-black/40 to-black/60">
+                                    <!-- Shot items will be added dynamically here -->
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Custom video controls below video -->
+                        <div id="custom-controls" class="bg-slate-900 rounded-b p-2 border-t border-slate-700">
+                            <div class="flex items-center gap-2">
+                                <button id="play-pause-btn" onclick="togglePlayPause()" class="w-8 h-8 flex items-center justify-center bg-blue-600 hover:bg-blue-700 rounded transition">
+                                    <svg id="play-icon" width="14" height="14" viewBox="0 0 24 24" fill="white">
+                                        <path d="M8 5v14l11-7z"/>
+                                    </svg>
+                                    <svg id="pause-icon" class="hidden" width="14" height="14" viewBox="0 0 24 24" fill="white">
+                                        <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/>
+                                    </svg>
+                                </button>
+                                <div class="flex-1 flex items-center gap-2">
+                                    <span id="current-time-display" class="text-xs font-mono text-slate-400 w-10">0:00</span>
+                                    <input type="range" id="seek-bar" min="0" max="100" value="0" step="0.1"
+                                           class="flex-1 h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer">
+                                    <span id="duration-display" class="text-xs font-mono text-slate-400 w-10">0:00</span>
+                                </div>
+                                <button id="mute-btn" onclick="toggleMute()" class="w-8 h-8 flex items-center justify-center bg-slate-700 hover:bg-slate-600 rounded text-sm transition">
+                                    <span id="volume-icon">🔊</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-slate-800 rounded-lg p-4">
+                <div class="flex justify-between items-center mb-2">
+                    <h3 class="font-bold">Interactive Waveform Editor</h3>
+                    <span class="text-sm text-slate-400" id="shot-count">0 shots</span>
+                </div>
+                <p class="text-xs text-slate-400 mb-2">
+                    <strong>Click</strong> to add shot | <strong>Drag</strong> to move | <strong>Right-click</strong> to delete | <strong>Shift+Click</strong> beep to move
+                </p>
+                <canvas id="waveform" width="1400" height="280" class="w-full border border-slate-700 rounded cursor-crosshair"></canvas>
+                <div class="flex gap-4 mt-2 text-xs flex-wrap">
+                    <div class="flex items-center gap-2">
+                        <div class="w-4 h-4 bg-blue-500 rounded"></div>
+                        <span>Timer Beep</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <div class="w-4 h-4 bg-green-500 rounded"></div>
+                        <span>Shot</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <div class="w-4 h-0.5 bg-red-500"></div>
+                        <span>Playhead</span>
+                    </div>
+                </div>
+            </div>
+
+            <div id="results-section"></div>
+        </div>
+    </div>
+
+    <script>
+        const SERVER_URL = 'http://localhost:5001';
+        let audioData = null;
+        let markers = [];
+        let videoElement = null;
+        let playheadAnimationFrame = null;
+        let draggedMarker = null;
+        let hasBeenEdited = false;
+        let canvasRect = null;
+        let currentShotIndex = -1;
+        let tickerTimeout = null;
+        let streamerPosition = 'bottom'; // 'top', 'bottom', 'left', 'right'
+        let videoAudioContext = null; // Reuse audio context
+        let videoSourceNode = null; // Track source node
+
+        document.getElementById('video-input').addEventListener('change', handleFileUpload);
+
+        async function handleFileUpload(e) {
+            const file = e.target.files[0];
+            if (!file || !file.type.startsWith('video/')) {
+                showError('Please select a valid video file');
+                return;
+            }
+
+            document.getElementById('processing').classList.remove('hidden');
+            updateProgress(10, 'Uploading video to server...');
+
+            try {
+                // Load video for playback
+                videoElement = document.getElementById('video-player');
+                videoElement.src = URL.createObjectURL(file);
+                await new Promise(resolve => videoElement.onloadedmetadata = resolve);
+
+                // Set up custom controls
+                const seekBar = document.getElementById('seek-bar');
+                const playPauseBtn = document.getElementById('play-pause-btn');
+
+                videoElement.addEventListener('loadedmetadata', () => {
+                    seekBar.max = videoElement.duration;
+                    document.getElementById('duration-display').textContent = formatTime(videoElement.duration);
+                });
+
+                videoElement.addEventListener('timeupdate', () => {
+                    updateShotTicker();
+                    seekBar.value = videoElement.currentTime;
+                    document.getElementById('current-time-display').textContent = formatTime(videoElement.currentTime);
+                });
+
+                videoElement.addEventListener('play', () => {
+                    document.getElementById('play-icon').classList.add('hidden');
+                    document.getElementById('pause-icon').classList.remove('hidden');
+                    startPlayheadAnimation();
+                });
+
+                videoElement.addEventListener('pause', () => {
+                    document.getElementById('play-icon').classList.remove('hidden');
+                    document.getElementById('pause-icon').classList.add('hidden');
+                    stopPlayheadAnimation();
+                });
+
+                videoElement.addEventListener('seeking', () => {
+                    clearTicker();
+                    drawWaveform(); // Update waveform playhead during seeking
+                });
+
+                videoElement.addEventListener('seeked', () => {
+                    drawWaveform(); // Update waveform playhead after seeking
+                });
+
+                // Seek bar control
+                seekBar.addEventListener('input', () => {
+                    videoElement.currentTime = seekBar.value;
+                });
+
+                // Set up ticker overlay to match video dimensions
+                // Use a slight delay to ensure video dimensions are available
+                videoElement.addEventListener('loadedmetadata', () => {
+                    setupTickerDimensions();
+                });
+                window.addEventListener('resize', setupTickerDimensions);
+
+                updateProgress(20, 'Processing with ML model...');
+
+                // Send to server for ML processing
+                const threshold = parseFloat(document.getElementById('threshold-slider').value);
+                const formData = new FormData();
+                formData.append('video', file);
+                formData.append('threshold', threshold);
+
+                // Track upload progress
+                const xhr = new XMLHttpRequest();
+
+                xhr.upload.addEventListener('progress', (e) => {
+                    if (e.lengthComputable) {
+                        const percentComplete = (e.loaded / e.total) * 50; // 0-50% for upload
+                        updateProgress(20 + percentComplete, 'Uploading to server...');
+                    }
+                });
+
+                const response = await new Promise((resolve, reject) => {
+                    xhr.open('POST', `${SERVER_URL}/api/analyze-video`);
+
+                    xhr.onload = () => {
+                        if (xhr.status >= 200 && xhr.status < 300) {
+                            resolve({ ok: true, json: async () => JSON.parse(xhr.responseText) });
+                        } else {
+                            resolve({ ok: false, json: async () => JSON.parse(xhr.responseText) });
+                        }
+                    };
+
+                    xhr.onerror = () => reject(new Error('Network error'));
+                    xhr.send(formData);
+
+                    updateProgress(70, 'Processing on server...');
+                });
+
+                updateProgress(85, 'Analyzing results...');
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Server error');
+                }
+
+                const results = await response.json();
+
+                // Extract audio for waveform
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const audioResponse = await fetch(videoElement.src);
+                const arrayBuffer = await audioResponse.arrayBuffer();
+                const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+                const channelData = audioBuffer.numberOfChannels > 1
+                    ? combineChannels(audioBuffer)
+                    : audioBuffer.getChannelData(0);
+
+                audioData = {
+                    data: channelData,
+                    sampleRate: audioBuffer.sampleRate,
+                    duration: audioBuffer.duration
+                };
+
+                updateProgress(90, 'Rendering results...');
+
+                // Create markers from ML results
+                markers = [];
+
+                // Add beep marker
+                markers.push({
+                    time: results.beep_time * 1000,
+                    type: 'beep',
+                    amplitude: 1.0,
+                    id: 'beep'
+                });
+
+                // Add shot markers
+                results.shots.forEach((shot, i) => {
+                    markers.push({
+                        time: shot.time * 1000,
+                        type: 'shot',
+                        amplitude: shot.confidence,
+                        id: `shot-${Date.now()}-${i}`
+                    });
+                });
+
+                updateProgress(100, 'Complete!');
+
+                document.getElementById('ml-shot-count').textContent = markers.filter(m => m.type === 'shot').length;
+                document.getElementById('upload-section').classList.add('hidden');
+                document.getElementById('analysis-section').classList.remove('hidden');
+                document.getElementById('processing').classList.add('hidden');
+
+                // Initialize streamer position after section is visible
+                setTimeout(() => {
+                    setupTickerDimensions();
+                }, 100);
+
+                setupWaveformInteraction();
+                drawWaveform();
+                displayResults();
+
+            } catch (err) {
+                showError('Error processing video: ' + err.message);
+                console.error(err);
+                document.getElementById('processing').classList.add('hidden');
+            }
+        }
+
+        function updateShotTicker() {
+            if (!videoElement || !markers.length) return;
+
+            const currentTime = videoElement.currentTime * 1000; // Convert to ms
+            const beep = markers.find(m => m.type === 'beep');
+            const shots = markers.filter(m => m.type === 'shot');
+
+            if (!beep) return;
+
+            if (shots.length === 0) {
+                // Just update the timer before any shots
+                updateTickerDisplay(-1, shots, beep);
+                return;
+            }
+
+            // Find all shots that have been passed
+            let lastPassedIndex = -1;
+            for (let i = 0; i < shots.length; i++) {
+                if (currentTime >= shots[i].time) {
+                    lastPassedIndex = i;
+                } else {
+                    break;
+                }
+            }
+
+            // Always update the ticker (to keep timer running)
+            if (lastPassedIndex !== currentShotIndex) {
+                currentShotIndex = lastPassedIndex;
+            }
+            updateTickerDisplay(lastPassedIndex, shots, beep);
+        }
+
+        function updateTickerDisplay(latestShotIndex, shots, beep) {
+            const container = document.getElementById('ticker-container');
+            const isVertical = streamerPosition === 'left' || streamerPosition === 'right';
+
+            // Calculate timer value - stops at last shot
+            const currentTime = videoElement ? videoElement.currentTime * 1000 : 0;
+            let timerValue;
+            if (shots.length > 0 && currentTime > shots[shots.length - 1].time) {
+                // After last shot, freeze timer at last shot time
+                timerValue = ((shots[shots.length - 1].time - beep.time) / 1000).toFixed(2);
+            } else {
+                // Before last shot, show current time relative to beep
+                timerValue = ((currentTime - beep.time) / 1000).toFixed(2);
+            }
+
+            if (latestShotIndex < 0) {
+                // Before any shots, just show the timer
+                container.innerHTML = `
+                    <div class="flex items-center gap-1 bg-blue-900/90 backdrop-blur-sm rounded px-3 py-1.5 flex-shrink-0 border border-blue-500/50" style="min-width: 80px;">
+                        <span class="text-white font-mono font-bold text-base">${timerValue}s</span>
+                    </div>
+                `;
+                return;
+            }
+
+            // Always show Shot 1 (Draw) + last 4 shots
+            const shotsToShow = [];
+
+            // Always include shot 0 (Draw)
+            shotsToShow.push({ shot: shots[0], index: 0, isFirst: true });
+
+            // Add last 4 shots (or fewer if we don't have that many yet)
+            const lastShotsStart = Math.max(1, latestShotIndex - 3);
+            for (let i = lastShotsStart; i <= latestShotIndex; i++) {
+                shotsToShow.push({ shot: shots[i], index: i, isFirst: false });
+            }
+
+            // Clear and rebuild
+            container.innerHTML = '';
+
+            // Add timer at the start/bottom (fixed size to prevent movement)
+            const timerEl = document.createElement('div');
+            timerEl.className = 'flex items-center gap-1 bg-blue-900/90 backdrop-blur-sm rounded px-3 py-1.5 flex-shrink-0 border border-blue-500/50';
+            timerEl.style.minWidth = isVertical ? '100%' : '80px';
+            timerEl.innerHTML = `
+                <span class="text-white font-mono font-bold text-base">${timerValue}s</span>
+            `;
+
+            // For vertical layout, add timer at the end (bottom)
+            if (!isVertical) {
+                container.appendChild(timerEl);
+            }
+
+            // Add shots (all with consistent sizing)
+            shotsToShow.forEach(({ shot, index, isFirst }) => {
+                // Calculate split time
+                let splitTime;
+                if (index === 0) {
+                    splitTime = ((shot.time - beep.time) / 1000).toFixed(2);
+                } else {
+                    splitTime = ((shot.time - shots[index - 1].time) / 1000).toFixed(2);
+                }
+
+                // Create shot element
+                const shotEl = document.createElement('div');
+                const isLatest = index === latestShotIndex;
+                const shotLabel = isFirst ? 'Draw' : `Shot ${index + 1}`;
+                // Use consistent sizing for all shots to prevent jitter
+                shotEl.className = `flex items-center gap-1 ${isLatest ? 'bg-green-900/90' : 'bg-black/50'} backdrop-blur-sm rounded px-2 py-1.5 flex-shrink-0 transition-colors duration-200 border ${isLatest ? 'border-green-500/50' : 'border-white/10'}`;
+                shotEl.style.minWidth = isVertical ? '100%' : '95px';
+                shotEl.innerHTML = `
+                    <span class="${isLatest ? 'text-green-300' : 'text-slate-400'} font-bold text-xs" style="min-width: 45px;">${shotLabel}</span>
+                    <span class="${isLatest ? 'text-white' : 'text-slate-300'} font-mono font-bold text-sm">${splitTime}s</span>
+                `;
+
+                container.appendChild(shotEl);
+            });
+
+            // For vertical layout, add timer at the bottom
+            if (isVertical) {
+                container.appendChild(timerEl);
+            }
+        }
+
+        function clearTicker() {
+            const container = document.getElementById('ticker-container');
+            container.innerHTML = '';
+            currentShotIndex = -1;
+        }
+
+        function setupTickerDimensions() {
+            if (!videoElement) return;
+
+            // Wait for video to have actual dimensions
+            const width = videoElement.offsetWidth;
+            const height = videoElement.offsetHeight;
+
+            if (width && height) {
+                const overlay = document.getElementById('shot-overlay');
+                const controls = document.getElementById('custom-controls');
+
+                // Match controls width to video width
+                controls.style.width = width + 'px';
+
+                applyStreamerPosition(overlay, width, height);
+            }
+        }
+
+        function setStreamerPosition(position) {
+            streamerPosition = position;
+
+            // Update button states
+            ['top', 'bottom', 'left', 'right'].forEach(pos => {
+                const btn = document.getElementById(`pos-${pos}`);
+                if (pos === position) {
+                    btn.classList.remove('bg-slate-700', 'hover:bg-slate-600');
+                    btn.classList.add('bg-blue-600', 'hover:bg-blue-700');
+                } else {
+                    btn.classList.remove('bg-blue-600', 'hover:bg-blue-700');
+                    btn.classList.add('bg-slate-700', 'hover:bg-slate-600');
+                }
+            });
+
+            // Reapply position to overlay
+            if (videoElement) {
+                const overlay = document.getElementById('shot-overlay');
+                const width = videoElement.offsetWidth;
+                const height = videoElement.offsetHeight;
+                applyStreamerPosition(overlay, width, height);
+            }
+
+            // Refresh display
+            if (markers.length > 0) {
+                updateShotTicker();
+            }
+        }
+
+        function applyStreamerPosition(overlay, videoWidth, videoHeight) {
+            const container = document.getElementById('ticker-container');
+
+            // Reset all positioning styles
+            overlay.style.top = '';
+            overlay.style.bottom = '';
+            overlay.style.left = '';
+            overlay.style.right = '';
+            overlay.style.width = '';
+            overlay.style.height = '';
+
+            switch(streamerPosition) {
+                case 'top':
+                    overlay.style.top = '0';
+                    overlay.style.left = '0';
+                    overlay.style.width = videoWidth + 'px';
+                    overlay.style.height = '48px';
+                    overlay.className = 'absolute h-12 overflow-hidden pointer-events-none';
+                    container.className = 'flex gap-2 h-full items-center px-3 bg-gradient-to-r from-transparent via-black/40 to-black/60';
+                    break;
+
+                case 'bottom':
+                    overlay.style.bottom = '0'; // At bottom of video (controls are now separate below)
+                    overlay.style.left = '0';
+                    overlay.style.width = videoWidth + 'px';
+                    overlay.style.height = '48px';
+                    overlay.className = 'absolute h-12 overflow-hidden pointer-events-none';
+                    container.className = 'flex gap-2 h-full items-center px-3 bg-gradient-to-r from-transparent via-black/40 to-black/60';
+                    break;
+
+                case 'left':
+                    overlay.style.top = '0';
+                    overlay.style.left = '0';
+                    overlay.style.width = '140px';
+                    overlay.style.height = videoHeight + 'px';
+                    overlay.className = 'absolute overflow-hidden pointer-events-none';
+                    container.className = 'flex flex-col-reverse gap-2 h-full justify-start py-3 px-2 bg-gradient-to-r from-black/60 via-black/40 to-transparent';
+                    break;
+
+                case 'right':
+                    overlay.style.top = '0';
+                    overlay.style.right = '0';
+                    overlay.style.width = '140px';
+                    overlay.style.height = videoHeight + 'px';
+                    overlay.className = 'absolute overflow-hidden pointer-events-none';
+                    container.className = 'flex flex-col-reverse gap-2 h-full justify-start py-3 px-2 bg-gradient-to-l from-black/60 via-black/40 to-transparent';
+                    break;
+            }
+        }
+
+        function setupWaveformInteraction() {
+            const canvas = document.getElementById('waveform');
+
+            // Update canvas rect on resize
+            function updateCanvasRect() {
+                canvasRect = canvas.getBoundingClientRect();
+            }
+            updateCanvasRect();
+            window.addEventListener('resize', updateCanvasRect);
+
+            // Mouse down - start drag or add marker
+            canvas.addEventListener('mousedown', (e) => {
+                if (e.button === 2) return; // Ignore right-click
+
+                const rect = canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const time = (x / rect.width) * audioData.duration * 1000;
+
+                // Check if clicking on existing marker
+                const clickedMarker = findMarkerAtPosition(x, rect.width);
+
+                if (clickedMarker) {
+                    // Special handling for beep - only move on Shift+Click
+                    if (clickedMarker.type === 'beep') {
+                        if (e.shiftKey) {
+                            draggedMarker = clickedMarker;
+                            canvas.style.cursor = 'grabbing';
+                        }
+                    } else {
+                        // Start dragging shot marker
+                        draggedMarker = clickedMarker;
+                        canvas.style.cursor = 'grabbing';
+                    }
+                } else if (!e.shiftKey) {
+                    // Add new shot marker
+                    const newMarker = {
+                        time: time,
+                        type: 'shot',
+                        amplitude: 0.8,
+                        id: `shot-${Date.now()}`
+                    };
+                    markers.push(newMarker);
+                    markers.sort((a, b) => a.time - b.time);
+                    markAsEdited();
+                    drawWaveform();
+                    displayResults();
+                }
+            });
+
+            // Mouse move - drag marker
+            canvas.addEventListener('mousemove', (e) => {
+                const rect = canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+
+                if (draggedMarker) {
+                    const time = Math.max(0, Math.min((x / rect.width) * audioData.duration * 1000, audioData.duration * 1000));
+                    draggedMarker.time = time;
+                    markers.sort((a, b) => a.time - b.time);
+                    drawWaveform();
+                    displayResults();
+                } else {
+                    // Change cursor on hover
+                    const hoveredMarker = findMarkerAtPosition(x, rect.width);
+                    canvas.style.cursor = hoveredMarker ? 'grab' : 'crosshair';
+                }
+            });
+
+            // Mouse up - end drag
+            canvas.addEventListener('mouseup', () => {
+                if (draggedMarker) {
+                    markAsEdited();
+                    draggedMarker = null;
+                    canvas.style.cursor = 'crosshair';
+                }
+            });
+
+            // Right-click - delete marker
+            canvas.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                const rect = canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const clickedMarker = findMarkerAtPosition(x, rect.width);
+
+                if (clickedMarker && clickedMarker.type === 'shot') {
+                    markers = markers.filter(m => m.id !== clickedMarker.id);
+                    markAsEdited();
+                    drawWaveform();
+                    displayResults();
+                }
+            });
+
+            // Click on waveform to seek video
+            canvas.addEventListener('dblclick', (e) => {
+                const rect = canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const time = (x / rect.width) * audioData.duration;
+                if (videoElement) {
+                    videoElement.currentTime = time;
+                }
+            });
+        }
+
+        function findMarkerAtPosition(x, canvasWidth) {
+            const clickThreshold = 10; // pixels
+            const duration = audioData.duration;
+
+            for (const marker of markers) {
+                const markerX = (marker.time / 1000 / duration) * canvasWidth;
+                if (Math.abs(x - markerX) < clickThreshold) {
+                    return marker;
+                }
+            }
+            return null;
+        }
+
+        function markAsEdited() {
+            hasBeenEdited = true;
+            document.getElementById('edit-indicator').classList.remove('hidden');
+            document.getElementById('ml-shot-count').textContent = markers.filter(m => m.type === 'shot').length;
+        }
+
+        function updateProgress(percent, text) {
+            document.getElementById('progress-bar').style.width = percent + '%';
+            document.getElementById('progress-text').textContent = text;
+        }
+
+        function combineChannels(audioBuffer) {
+            const left = audioBuffer.getChannelData(0);
+            const right = audioBuffer.getChannelData(1);
+            const combined = new Float32Array(left.length);
+            for (let i = 0; i < left.length; i++) {
+                combined[i] = (left[i] + right[i]) / 2;
+            }
+            return combined;
+        }
+
+        function startPlayheadAnimation() {
+            function animate() {
+                drawWaveform();
+                playheadAnimationFrame = requestAnimationFrame(animate);
+            }
+            animate();
+        }
+
+        function stopPlayheadAnimation() {
+            if (playheadAnimationFrame) {
+                cancelAnimationFrame(playheadAnimationFrame);
+                playheadAnimationFrame = null;
+            }
+            drawWaveform();
+        }
+
+        function drawWaveform() {
+            const canvas = document.getElementById('waveform');
+            if (!canvas || !audioData) return;
+
+            const ctx = canvas.getContext('2d');
+            const dpr = window.devicePixelRatio || 1;
+            const width = canvas.offsetWidth || canvas.clientWidth || 1400;
+            const height = canvas.offsetHeight || canvas.clientHeight || 280;
+
+            canvas.width = width * dpr;
+            canvas.height = height * dpr;
+            canvas.style.width = width + 'px';
+            canvas.style.height = height + 'px';
+            ctx.scale(dpr, dpr);
+
+            ctx.fillStyle = '#1e293b';
+            ctx.fillRect(0, 0, width, height);
+
+            const data = audioData.data;
+            const step = Math.ceil(data.length / width);
+            const amp = height / 2;
+
+            // Draw waveform
+            ctx.strokeStyle = '#3b82f6';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+
+            for (let i = 0; i < width; i++) {
+                let min = 1.0, max = -1.0;
+                for (let j = 0; j < step; j++) {
+                    const d = data[(i * step) + j] || 0;
+                    if (d < min) min = d;
+                    if (d > max) max = d;
+                }
+                ctx.moveTo(i, (1 + min) * amp);
+                ctx.lineTo(i, (1 + max) * amp);
+            }
+            ctx.stroke();
+
+            const duration = audioData.duration;
+            const shots = markers.filter(m => m.type === 'shot');
+            let shotNum = 0;
+
+            // Draw markers
+            markers.forEach(m => {
+                const x = (m.time / 1000 / duration) * width;
+
+                if (m.type === 'beep') {
+                    ctx.fillStyle = '#3b82f6';
+                    ctx.fillRect(x - 3, 0, 6, height);
+                    ctx.font = 'bold 14px monospace';
+                    ctx.fillText('BEEP', x + 6, 20);
+                } else if (m.type === 'shot') {
+                    shotNum++;
+                    // Color intensity based on ML confidence
+                    const opacity = Math.min(1, m.amplitude + 0.3);
+                    ctx.fillStyle = `rgba(34, 197, 94, ${opacity})`; // green
+                    ctx.fillRect(x - 2, 0, 4, height);
+                    ctx.font = '11px monospace';
+                    ctx.fillStyle = '#22c55e';
+                    ctx.fillText(shotNum, x + 5, 35);
+                }
+            });
+
+            // Draw playhead
+            if (videoElement && !isNaN(videoElement.currentTime)) {
+                const playheadX = (videoElement.currentTime / duration) * width;
+                ctx.strokeStyle = '#ef4444'; // red
+                ctx.lineWidth = 2;
+                ctx.setLineDash([5, 5]);
+                ctx.beginPath();
+                ctx.moveTo(playheadX, 0);
+                ctx.lineTo(playheadX, height);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+
+            document.getElementById('shot-count').textContent = `${shots.length} shots`;
+        }
+
+        function displayResults() {
+            const beep = markers.find(m => m.type === 'beep');
+            const shots = markers.filter(m => m.type === 'shot');
+
+            if (shots.length === 0) {
+                document.getElementById('results-section').innerHTML = '<div class="bg-slate-800 rounded-lg p-6"><p class="text-slate-400">No shots detected</p></div>';
+                return;
+            }
+
+            const drawTime = ((shots[0].time - beep.time) / 1000).toFixed(2);
+            const stageTime = ((shots[shots.length - 1].time - beep.time) / 1000).toFixed(2);
+            const avgSplit = shots.length > 1
+                ? ((shots.map((s, i) => i > 0 ? s.time - shots[i-1].time : 0).slice(1).reduce((a, b) => a + b, 0) / (shots.length - 1)) / 1000).toFixed(2)
+                : 'N/A';
+
+            const avgConfidence = (shots.reduce((sum, s) => sum + s.amplitude, 0) / shots.length * 100).toFixed(1);
+
+            let html = `
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                    <div class="bg-slate-800 rounded-lg p-4">
+                        <div class="text-sm text-slate-400 mb-1">Draw Time</div>
+                        <div class="text-3xl font-bold text-green-400">${drawTime}</div>
+                        <div class="text-xs text-slate-500">seconds</div>
+                    </div>
+                    <div class="bg-slate-800 rounded-lg p-4">
+                        <div class="text-sm text-slate-400 mb-1">Stage Time</div>
+                        <div class="text-3xl font-bold text-purple-400">${stageTime}</div>
+                        <div class="text-xs text-slate-500">seconds</div>
+                    </div>
+                    <div class="bg-slate-800 rounded-lg p-4">
+                        <div class="text-sm text-slate-400 mb-1">Total Shots</div>
+                        <div class="text-3xl font-bold">${shots.length}</div>
+                        <div class="text-xs ${hasBeenEdited ? 'text-yellow-500' : 'text-green-500'}">${hasBeenEdited ? 'Manual Edit' : 'ML Detected'}</div>
+                    </div>
+                    <div class="bg-slate-800 rounded-lg p-4">
+                        <div class="text-sm text-slate-400 mb-1">Avg Split</div>
+                        <div class="text-3xl font-bold text-blue-400">${avgSplit}</div>
+                        <div class="text-xs text-slate-500">seconds</div>
+                    </div>
+                </div>
+                <div class="bg-slate-800 rounded-lg p-6">
+                    <h3 class="font-bold text-lg mb-4">All Split Times</h3>
+                    <div class="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-3">
+            `;
+
+            for (let i = 1; i < shots.length; i++) {
+                const split = ((shots[i].time - shots[i-1].time) / 1000).toFixed(2);
+                const conf = (shots[i].amplitude * 100).toFixed(0);
+                html += `
+                    <div class="bg-slate-700 p-3 rounded">
+                        <div class="text-xs text-slate-400">→ Shot ${i + 1}</div>
+                        <div class="font-mono font-bold text-lg">${split}</div>
+                        <div class="text-xs text-slate-500">${conf}% conf</div>
+                    </div>
+                `;
+            }
+
+            html += '</div></div>';
+            document.getElementById('results-section').innerHTML = html;
+        }
+
+        function exportData() {
+            const beep = markers.find(m => m.type === 'beep');
+            const shots = markers.filter(m => m.type === 'shot');
+
+            if (shots.length === 0) {
+                showError('No shots to export');
+                return;
+            }
+
+            const drawTime = ((shots[0].time - beep.time) / 1000).toFixed(2);
+
+            let csv = 'USPSA Stage Analysis (ML Powered)\n';
+            csv += `Total Shots,${shots.length}\n`;
+            csv += `Draw Time (s),${drawTime}\n`;
+            csv += `Beep Time (s),${(beep.time / 1000).toFixed(2)}\n`;
+            csv += `Edited,${hasBeenEdited ? 'Yes' : 'No'}\n\n`;
+            csv += 'Shot Details\n';
+            csv += 'Shot #,Time (s),ML Confidence\n';
+
+            shots.forEach((shot, i) => {
+                csv += `${i + 1},${(shot.time / 1000).toFixed(2)},${(shot.amplitude * 100).toFixed(1)}%\n`;
+            });
+
+            csv += '\nSplit Times\n';
+            csv += 'To Shot #,Time (s)\n';
+
+            for (let i = 1; i < shots.length; i++) {
+                const split = ((shots[i].time - shots[i-1].time) / 1000).toFixed(2);
+                csv += `${i + 1},${split}\n`;
+            }
+
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'uspsa-ml-timing-analysis.csv';
+            a.click();
+        }
+
+        function togglePlayPause() {
+            if (!videoElement) return;
+            if (videoElement.paused) {
+                videoElement.play();
+            } else {
+                videoElement.pause();
+            }
+        }
+
+        function toggleMute() {
+            if (!videoElement) return;
+            videoElement.muted = !videoElement.muted;
+            document.getElementById('volume-icon').textContent = videoElement.muted ? '🔇' : '🔊';
+        }
+
+        function formatTime(seconds) {
+            if (isNaN(seconds)) return '0:00';
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            return `${mins}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        async function exportVideo() {
+            if (!videoElement || !markers.length) {
+                showError('No video loaded or no shots detected');
+                return;
+            }
+
+            const modal = document.getElementById('export-modal');
+            const modalContent = modal.querySelector('.bg-slate-800');
+
+            // Reset modal to initial state
+            modalContent.innerHTML = `
+                <h3 class="text-xl font-bold mb-4">Choose Export Format</h3>
+                <p class="text-sm text-slate-300 mb-4">Select the video format you want to export:</p>
+
+                <div class="space-y-3 mb-4">
+                    <button onclick="startExport('webm')" class="w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 rounded text-left transition">
+                        <div class="font-bold mb-1">WebM (Instant)</div>
+                        <div class="text-xs text-slate-300">VP9 codec • Works in VLC, Chrome, Firefox, Edge • ~30-60 seconds</div>
+                    </button>
+
+                    <button onclick="startExport('mp4')" class="w-full px-4 py-3 bg-purple-600 hover:bg-purple-700 rounded text-left transition">
+                        <div class="font-bold mb-1">MP4 (QuickTime Compatible)</div>
+                        <div class="text-xs text-slate-300">H.264 codec • Works everywhere including QuickTime • ~90-180 seconds</div>
+                    </button>
+                </div>
+
+                <button onclick="document.getElementById('export-modal').classList.add('hidden')" class="w-full px-4 py-2 bg-slate-600 hover:bg-slate-500 rounded transition">
+                    Cancel
+                </button>
+
+                <div id="export-progress-container" class="hidden mt-4">
+                    <div class="w-full bg-slate-700 rounded-full h-3 mb-2">
+                        <div id="export-progress-bar" class="bg-purple-600 h-3 rounded-full transition-all duration-300" style="width: 0%"></div>
+                    </div>
+                    <p class="text-sm text-slate-400" id="export-progress-text">Preparing...</p>
+                </div>
+            `;
+
+            modal.classList.remove('hidden');
+        }
+
+        async function startExport(format) {
+            const modalContent = document.getElementById('export-modal').querySelector('.bg-slate-800');
+            const progressContainer = document.getElementById('export-progress-container');
+            const progressBar = document.getElementById('export-progress-bar');
+            const progressText = document.getElementById('export-progress-text');
+
+            // Hide format choice buttons, show progress
+            modalContent.querySelector('.space-y-3').parentElement.classList.add('hidden');
+            progressContainer.classList.remove('hidden');
+
+            progressBar.style.width = '0%';
+            progressText.textContent = 'Preparing export...';
+
+            try {
+                // Create a separate video element for export to avoid AudioContext conflicts
+                const exportVideo = document.createElement('video');
+                exportVideo.src = videoElement.src;
+                exportVideo.muted = false;
+                exportVideo.crossOrigin = 'anonymous';
+
+                await new Promise((resolve) => {
+                    exportVideo.onloadedmetadata = resolve;
+                });
+
+                // Create canvas for rendering
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d', { alpha: false });
+
+                // Match video dimensions exactly
+                const width = exportVideo.videoWidth;
+                const height = exportVideo.videoHeight;
+                canvas.width = width;
+                canvas.height = height;
+
+                progressText.textContent = 'Setting up recorder...';
+                progressBar.style.width = '5%';
+
+                // Set up MediaRecorder with higher quality settings
+                const stream = canvas.captureStream(30); // 30 fps
+
+                // Create fresh AudioContext for export
+                const exportAudioContext = new AudioContext();
+                const source = exportAudioContext.createMediaElementSource(exportVideo);
+                const destination = exportAudioContext.createMediaStreamDestination();
+                source.connect(destination);
+
+                // Add audio track to stream
+                const audioTrack = destination.stream.getAudioTracks()[0];
+                if (audioTrack) {
+                    stream.addTrack(audioTrack);
+                }
+
+                const chunks = [];
+
+                // Use VP9 for best WebM quality
+                let mimeType;
+                if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')) {
+                    mimeType = 'video/webm;codecs=vp9,opus';
+                } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
+                    mimeType = 'video/webm;codecs=vp9';
+                } else {
+                    mimeType = 'video/webm';
+                }
+
+                const recorder = new MediaRecorder(stream, {
+                    mimeType: mimeType,
+                    videoBitsPerSecond: 8000000 // 8 Mbps for better quality
+                });
+
+                recorder.ondataavailable = (e) => {
+                    if (e.data.size > 0) {
+                        chunks.push(e.data);
+                    }
+                };
+
+                recorder.onstop = async () => {
+                    const blob = new Blob(chunks, { type: mimeType });
+
+                    if (format === 'webm') {
+                        // WebM only - download and finish
+                        progressText.textContent = 'Finalizing video...';
+                        progressBar.style.width = '95%';
+
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = 'uspsa-analysis-with-overlay.webm';
+                        a.click();
+
+                        progressBar.style.width = '100%';
+                        progressText.textContent = '✅ WebM export complete!';
+
+                        setTimeout(() => {
+                            modal.classList.add('hidden');
+                            URL.revokeObjectURL(url);
+                        }, 1500);
+
+                        exportAudioContext.close();
+                        exportVideo.remove();
+
+                    } else if (format === 'mp4') {
+                        // MP4 - continue to server conversion
+                        progressText.textContent = 'Preparing for MP4 conversion...';
+                        progressBar.style.width = '50%';
+
+                        exportAudioContext.close();
+                        exportVideo.remove();
+
+                        // Start MP4 conversion
+                        await convertWebMToMP4(blob, progressBar, progressText);
+                    }
+                };
+
+                progressText.textContent = 'Rendering video...';
+                progressBar.style.width = '10%';
+
+                // Start recording
+                recorder.start(1000); // Collect data every second
+
+                // Start video from beginning
+                exportVideo.currentTime = 0;
+                await exportVideo.play();
+
+                const duration = exportVideo.duration;
+                const beep = markers.find(m => m.type === 'beep');
+                const shots = markers.filter(m => m.type === 'shot');
+
+                // Streamer dimensions
+                const streamerHeight = Math.floor(height * 0.08); // 8% of video height
+                const streamerWidth = Math.floor(width * 0.15); // 15% of video width
+
+                let frameCount = 0;
+                let lastProgressUpdate = 0;
+
+                // Render loop - called for every video frame
+                function renderFrame() {
+                    // Clear canvas
+                    ctx.fillStyle = '#000000';
+                    ctx.fillRect(0, 0, width, height);
+
+                    // Draw video frame
+                    ctx.drawImage(exportVideo, 0, 0, width, height);
+
+                    // Draw shot streamer overlay
+                    const currentTime = exportVideo.currentTime * 1000;
+
+                    if (beep && shots.length > 0) {
+                        // Show countdown timer before beep, regular timer after
+                        if (currentTime < beep.time) {
+                            // Before beep - show countdown
+                            drawCountdownOverlay(ctx, width, height, currentTime, beep, streamerHeight, streamerWidth);
+                        } else {
+                            // After beep - show shot streamer
+                            let lastPassedIndex = -1;
+                            for (let i = 0; i < shots.length; i++) {
+                                if (currentTime >= shots[i].time) {
+                                    lastPassedIndex = i;
+                                }
+                            }
+
+                            if (lastPassedIndex >= 0) {
+                                drawStreamerOverlay(ctx, width, height, currentTime, beep, shots, lastPassedIndex, streamerHeight, streamerWidth);
+                            } else {
+                                // Between beep and first shot - show just timer
+                                drawCountdownOverlay(ctx, width, height, currentTime, beep, streamerHeight, streamerWidth);
+                            }
+                        }
+                    }
+
+                    frameCount++;
+
+                    // Update progress (throttled to every 0.5 seconds)
+                    const progress = (exportVideo.currentTime / duration) * 100;
+                    const now = Date.now();
+                    if (now - lastProgressUpdate > 500) {
+                        // For MP4: rendering is 10-50% (first half), conversion is 50-100% (second half)
+                        // For WebM: rendering is 10-100%
+                        const maxRenderProgress = format === 'mp4' ? 50 : 95;
+                        const renderProgress = 10 + (progress * (maxRenderProgress - 10) / 100);
+                        progressBar.style.width = renderProgress + '%';
+                        progressText.textContent = `Rendering: ${Math.floor(progress)}% (${exportVideo.currentTime.toFixed(1)}s / ${duration.toFixed(1)}s)`;
+                        lastProgressUpdate = now;
+                    }
+
+                    // Continue until video ends
+                    if (exportVideo.currentTime < duration && !exportVideo.paused && !exportVideo.ended) {
+                        requestAnimationFrame(renderFrame);
+                    } else {
+                        console.log(`Rendered ${frameCount} frames`);
+                        recorder.stop();
+                        exportVideo.pause();
+                    }
+                }
+
+                requestAnimationFrame(renderFrame);
+
+            } catch (err) {
+                console.error('Export error:', err);
+                showError('Error exporting video: ' + err.message);
+                modal.classList.add('hidden');
+            }
+        }
+
+        function drawCountdownOverlay(ctx, width, height, currentTime, beep, streamerHeight, streamerWidth) {
+            ctx.save();
+
+            // Position based on streamer setting
+            let overlayX, overlayY, overlayW, overlayH;
+            const isVertical = streamerPosition === 'left' || streamerPosition === 'right';
+
+            if (streamerPosition === 'top') {
+                overlayX = 0;
+                overlayY = 0;
+                overlayW = width;
+                overlayH = streamerHeight;
+            } else if (streamerPosition === 'bottom') {
+                overlayX = 0;
+                overlayY = height - streamerHeight;
+                overlayW = width;
+                overlayH = streamerHeight;
+            } else if (streamerPosition === 'left') {
+                overlayX = 0;
+                overlayY = 0;
+                overlayW = streamerWidth;
+                overlayH = height;
+            } else { // right
+                overlayX = width - streamerWidth;
+                overlayY = 0;
+                overlayW = streamerWidth;
+                overlayH = height;
+            }
+
+            // Draw semi-transparent background
+            const gradient = isVertical
+                ? ctx.createLinearGradient(overlayX, 0, overlayX + overlayW, 0)
+                : ctx.createLinearGradient(0, overlayY, 0, overlayY + overlayH);
+
+            if (streamerPosition === 'left') {
+                gradient.addColorStop(0, 'rgba(0, 0, 0, 0.7)');
+                gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+            } else if (streamerPosition === 'right') {
+                gradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
+                gradient.addColorStop(1, 'rgba(0, 0, 0, 0.7)');
+            } else {
+                gradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
+                gradient.addColorStop(0.5, 'rgba(0, 0, 0, 0.5)');
+                gradient.addColorStop(1, 'rgba(0, 0, 0, 0.7)');
+            }
+
+            ctx.fillStyle = gradient;
+            ctx.fillRect(overlayX, overlayY, overlayW, overlayH);
+
+            // Calculate countdown timer (negative before beep, positive after)
+            const baseFontSize = Math.floor(Math.min(width, height) * 0.025);
+            const timerValue = ((currentTime - beep.time) / 1000).toFixed(2);
+
+            if (isVertical) {
+                // Vertical - timer at bottom
+                const itemHeight = Math.floor(streamerHeight * 0.04);
+                const padding = Math.floor(overlayW * 0.05);
+                const yPos = overlayY + overlayH - padding - itemHeight;
+
+                ctx.fillStyle = 'rgba(59, 130, 246, 0.95)';
+                ctx.fillRect(overlayX + padding, yPos, overlayW - 2 * padding, itemHeight);
+                ctx.fillStyle = 'white';
+                ctx.font = `bold ${baseFontSize}px monospace`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(timerValue + 's', overlayX + overlayW / 2, yPos + itemHeight / 2);
+            } else {
+                // Horizontal - timer on left
+                const itemHeight = Math.floor(streamerHeight * 0.6);
+                const padding = Math.floor(streamerHeight * 0.2);
+                const timerWidth = Math.floor(width * 0.08);
+                const xPos = overlayX + padding;
+                const yCenter = overlayY + streamerHeight / 2;
+
+                ctx.fillStyle = 'rgba(59, 130, 246, 0.95)';
+                ctx.fillRect(xPos, yCenter - itemHeight / 2, timerWidth, itemHeight);
+                ctx.fillStyle = 'white';
+                ctx.font = `bold ${baseFontSize}px monospace`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(timerValue + 's', xPos + timerWidth / 2, yCenter);
+            }
+
+            ctx.restore();
+        }
+
+        function drawStreamerOverlay(ctx, width, height, currentTime, beep, shots, lastPassedIndex, streamerHeight, streamerWidth) {
+            ctx.save();
+
+            // Set up overlay position
+            let overlayX, overlayY, overlayW, overlayH;
+            const isVertical = streamerPosition === 'left' || streamerPosition === 'right';
+
+            if (streamerPosition === 'top') {
+                overlayX = 0;
+                overlayY = 0;
+                overlayW = width;
+                overlayH = streamerHeight;
+            } else if (streamerPosition === 'bottom') {
+                overlayX = 0;
+                overlayY = height - streamerHeight;
+                overlayW = width;
+                overlayH = streamerHeight;
+            } else if (streamerPosition === 'left') {
+                overlayX = 0;
+                overlayY = 0;
+                overlayW = streamerWidth;
+                overlayH = height;
+            } else { // right
+                overlayX = width - streamerWidth;
+                overlayY = 0;
+                overlayW = streamerWidth;
+                overlayH = height;
+            }
+
+            // Draw semi-transparent background
+            const gradient = isVertical
+                ? ctx.createLinearGradient(overlayX, 0, overlayX + overlayW, 0)
+                : ctx.createLinearGradient(0, overlayY, 0, overlayY + overlayH);
+
+            if (streamerPosition === 'left') {
+                gradient.addColorStop(0, 'rgba(0, 0, 0, 0.7)');
+                gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+            } else if (streamerPosition === 'right') {
+                gradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
+                gradient.addColorStop(1, 'rgba(0, 0, 0, 0.7)');
+            } else {
+                gradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
+                gradient.addColorStop(0.5, 'rgba(0, 0, 0, 0.5)');
+                gradient.addColorStop(1, 'rgba(0, 0, 0, 0.7)');
+            }
+
+            ctx.fillStyle = gradient;
+            ctx.fillRect(overlayX, overlayY, overlayW, overlayH);
+
+            // Calculate responsive font sizes
+            const baseFontSize = Math.floor(Math.min(width, height) * 0.025);
+            const timerValue = ((currentTime - beep.time) / 1000).toFixed(2);
+
+            if (isVertical) {
+                // Vertical layout - timer at bottom, shots above
+                const itemHeight = Math.floor(streamerHeight * 0.04);
+                const padding = Math.floor(overlayW * 0.05);
+                let yPos = overlayY + overlayH - padding - itemHeight;
+
+                // Timer
+                ctx.fillStyle = 'rgba(59, 130, 246, 0.95)';
+                ctx.fillRect(overlayX + padding, yPos, overlayW - 2 * padding, itemHeight);
+                ctx.fillStyle = 'white';
+                ctx.font = `bold ${baseFontSize}px monospace`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(timerValue + 's', overlayX + overlayW / 2, yPos + itemHeight / 2);
+
+                yPos -= itemHeight + padding / 2;
+
+                // Show Draw + last 3 shots
+                const shotsToShow = [0];
+                const lastStart = Math.max(1, lastPassedIndex - 2);
+                for (let i = lastStart; i <= lastPassedIndex; i++) {
+                    shotsToShow.push(i);
+                }
+
+                for (let i = shotsToShow.length - 1; i >= 0; i--) {
+                    const shotIdx = shotsToShow[i];
+                    const split = shotIdx === 0
+                        ? ((shots[0].time - beep.time) / 1000).toFixed(2)
+                        : ((shots[shotIdx].time - shots[shotIdx - 1].time) / 1000).toFixed(2);
+
+                    const label = shotIdx === 0 ? 'Draw' : `Shot ${shotIdx + 1}`;
+                    const isLatest = shotIdx === lastPassedIndex;
+
+                    ctx.fillStyle = isLatest ? 'rgba(34, 197, 94, 0.95)' : 'rgba(0, 0, 0, 0.6)';
+                    ctx.fillRect(overlayX + padding, yPos, overlayW - 2 * padding, itemHeight);
+                    ctx.fillStyle = isLatest ? 'white' : '#cbd5e1';
+                    ctx.font = `bold ${baseFontSize * 0.7}px monospace`;
+                    ctx.textAlign = 'left';
+                    ctx.fillText(label, overlayX + padding * 1.5, yPos + itemHeight * 0.35);
+                    ctx.font = `bold ${baseFontSize}px monospace`;
+                    ctx.fillText(split + 's', overlayX + padding * 1.5, yPos + itemHeight * 0.75);
+
+                    yPos -= itemHeight + padding / 2;
+                }
+            } else {
+                // Horizontal layout - timer first, then shots
+                const itemHeight = Math.floor(streamerHeight * 0.6);
+                const padding = Math.floor(streamerHeight * 0.2);
+                const timerWidth = Math.floor(width * 0.08);
+                let xPos = overlayX + padding;
+                const yCenter = overlayY + streamerHeight / 2;
+
+                // Timer
+                ctx.fillStyle = 'rgba(59, 130, 246, 0.95)';
+                ctx.fillRect(xPos, yCenter - itemHeight / 2, timerWidth, itemHeight);
+                ctx.fillStyle = 'white';
+                ctx.font = `bold ${baseFontSize}px monospace`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(timerValue + 's', xPos + timerWidth / 2, yCenter);
+
+                xPos += timerWidth + padding;
+
+                // Show Draw + last 3 shots
+                const shotsToShow = [0];
+                const lastStart = Math.max(1, lastPassedIndex - 2);
+                for (let i = lastStart; i <= lastPassedIndex; i++) {
+                    shotsToShow.push(i);
+                }
+
+                shotsToShow.forEach(shotIdx => {
+                    const split = shotIdx === 0
+                        ? ((shots[0].time - beep.time) / 1000).toFixed(2)
+                        : ((shots[shotIdx].time - shots[shotIdx - 1].time) / 1000).toFixed(2);
+
+                    const label = shotIdx === 0 ? 'Draw' : `S${shotIdx + 1}`;
+                    const isLatest = shotIdx === lastPassedIndex;
+                    const shotWidth = Math.floor(width * 0.09);
+
+                    if (xPos + shotWidth < overlayX + overlayW - padding) {
+                        ctx.fillStyle = isLatest ? 'rgba(34, 197, 94, 0.95)' : 'rgba(0, 0, 0, 0.6)';
+                        ctx.fillRect(xPos, yCenter - itemHeight / 2, shotWidth, itemHeight);
+                        ctx.fillStyle = isLatest ? 'white' : '#cbd5e1';
+                        ctx.font = `bold ${baseFontSize * 0.65}px monospace`;
+                        ctx.textAlign = 'left';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText(label, xPos + padding / 2, yCenter - itemHeight * 0.15);
+                        ctx.font = `bold ${baseFontSize}px monospace`;
+                        ctx.fillText(split + 's', xPos + padding / 2, yCenter + itemHeight * 0.15);
+
+                        xPos += shotWidth + padding / 2;
+                    }
+                });
+            }
+
+            ctx.restore();
+        }
+
+        async function convertWebMToMP4(webmBlob, progressBar, progressText) {
+            const modal = document.getElementById('export-modal');
+
+            try {
+                // Upload WebM to server
+                const formData = new FormData();
+                formData.append('video', webmBlob, 'video.webm');
+
+                progressText.textContent = 'Uploading to server...';
+                progressBar.style.width = '55%';
+
+                const xhr = new XMLHttpRequest();
+
+                // Track upload progress (50-65%)
+                xhr.upload.addEventListener('progress', (e) => {
+                    if (e.lengthComputable) {
+                        const uploadProgress = 50 + (e.loaded / e.total) * 15; // 50-65%
+                        progressBar.style.width = uploadProgress + '%';
+                        progressText.textContent = `Uploading: ${Math.floor((e.loaded / e.total) * 100)}%`;
+                    }
+                });
+
+                const response = await new Promise((resolve, reject) => {
+                    xhr.open('POST', `${SERVER_URL}/api/convert-to-mp4`);
+
+                    xhr.onload = () => {
+                        if (xhr.status >= 200 && xhr.status < 300) {
+                            resolve(xhr);
+                        } else {
+                            reject(new Error(xhr.statusText || 'Server error'));
+                        }
+                    };
+
+                    xhr.onerror = () => reject(new Error('Network error'));
+                    xhr.send(formData);
+                });
+
+                progressText.textContent = 'Converting on server...';
+                progressBar.style.width = '65%';
+
+                // Poll for conversion status (65-90%)
+                const statusUrl = JSON.parse(response.responseText).statusUrl;
+                let conversionComplete = false;
+
+                while (!conversionComplete) {
+                    await new Promise(resolve => setTimeout(resolve, 1000)); // Poll every second
+
+                    const statusResponse = await fetch(`${SERVER_URL}${statusUrl}`);
+                    const status = await statusResponse.json();
+
+                    if (status.progress) {
+                        const conversionProgress = 65 + (status.progress * 0.25); // 65-90%
+                        progressBar.style.width = conversionProgress + '%';
+                        progressText.textContent = `Converting: ${Math.floor(status.progress)}%`;
+                    }
+
+                    if (status.complete) {
+                        conversionComplete = true;
+                        progressBar.style.width = '90%';
+                        progressText.textContent = 'Downloading MP4...';
+
+                        // Download the MP4
+                        const mp4Response = await fetch(`${SERVER_URL}${status.downloadUrl}`);
+                        const mp4Blob = await mp4Response.blob();
+
+                        const url = URL.createObjectURL(mp4Blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = 'uspsa-analysis-with-overlay.mp4';
+                        a.click();
+
+                        progressBar.style.width = '100%';
+                        progressText.textContent = '✅ MP4 export complete!';
+
+                        setTimeout(() => {
+                            modal.classList.add('hidden');
+                            URL.revokeObjectURL(url);
+                        }, 2000);
+                    }
+
+                    if (status.error) {
+                        throw new Error(status.error);
+                    }
+                }
+
+            } catch (err) {
+                console.error('Conversion error:', err);
+                showError('Error converting to MP4: ' + err.message);
+                modal.classList.add('hidden');
+            }
+        }
+
+        function reset() {
+            document.getElementById('upload-section').classList.remove('hidden');
+            document.getElementById('analysis-section').classList.add('hidden');
+            document.getElementById('video-input').value = '';
+            if (videoElement) videoElement.src = '';
+            audioData = null;
+            markers = [];
+            hasBeenEdited = false;
+            clearTicker();
+            document.getElementById('edit-indicator').classList.add('hidden');
+            window.exportedWebMBlob = null; // Clear stored blob
+        }
+
+        function showError(msg) {
+            const errorDiv = document.getElementById('error');
+            errorDiv.textContent = msg;
+            errorDiv.classList.remove('hidden');
+            setTimeout(() => errorDiv.classList.add('hidden'), 5000);
+        }
+
+        window.addEventListener('resize', () => {
+            if (audioData) drawWaveform();
+        });
+    </script>
+</body>
+</html>

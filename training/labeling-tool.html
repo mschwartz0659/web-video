@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>USPSA Shot Timer - Labeling Tool</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-900 text-white p-6">
+    <div id="root" class="max-w-7xl mx-auto">
+        <div class="mb-8">
+            <h1 class="text-3xl font-bold mb-2">🏷️ Shot Labeling Tool</h1>
+            <p class="text-slate-400">Create training data for ML model - Mark shots, non-shots, and beeps</p>
+        </div>
+
+        <div id="error" class="hidden mb-4 p-4 bg-red-900/50 border border-red-700 rounded-lg"></div>
+        <div id="success" class="hidden mb-4 p-4 bg-green-900/50 border border-green-700 rounded-lg"></div>
+
+        <!-- Upload Section -->
+        <div id="upload-section" class="bg-slate-800 rounded-lg p-8 mb-6">
+            <h2 class="text-xl font-bold mb-4">1. Select Recording Type</h2>
+
+            <div class="mb-6">
+                <label class="block text-sm mb-2 text-slate-300">Choose the type of video you're labeling:</label>
+                <div class="flex gap-3">
+                    <button onclick="setRecordingType('first_person')" class="flex-1 px-4 py-3 bg-slate-700 hover:bg-slate-600 rounded" id="type-first">
+                        👓 First-Person (Smart Glasses)
+                    </button>
+                    <button onclick="setRecordingType('third_person')" class="flex-1 px-4 py-3 bg-slate-700 hover:bg-slate-600 rounded" id="type-third">
+                        📱 Third-Person (Distant Camera)
+                    </button>
+                </div>
+            </div>
+
+            <h2 class="text-xl font-bold mb-4 mt-8">2. Load Video</h2>
+
+            <div class="mb-4">
+                <label class="block text-sm mb-2">
+                    📁 Option 1: Start Fresh - Select Video File
+                </label>
+                <input type="file" accept="video/*" id="video-input" class="w-full px-3 py-2 bg-slate-700 rounded text-white">
+            </div>
+
+            <div class="my-6 text-center text-slate-500">
+                <div class="flex items-center">
+                    <div class="flex-1 border-t border-slate-600"></div>
+                    <span class="px-4">OR</span>
+                    <div class="flex-1 border-t border-slate-600"></div>
+                </div>
+            </div>
+
+            <div class="mb-4">
+                <label class="block text-sm mb-2">
+                    🔄 Option 2: Continue Existing - Load JSON + Video
+                </label>
+                <div class="space-y-2">
+                    <input type="file" accept=".json" id="labels-input" class="w-full px-3 py-2 bg-slate-700 rounded text-white" placeholder="1. Select JSON file">
+                    <input type="file" accept="video/*" id="video-continue-input" class="w-full px-3 py-2 bg-slate-700 rounded text-white hidden" placeholder="2. Select matching video">
+                    <p class="text-xs text-slate-400" id="json-instruction">Load your saved JSON file first</p>
+                </div>
+            </div>
+
+            <div class="mb-4 hidden" id="expected-shots-section">
+                <label class="block text-sm mb-2">Expected Shot Count (optional)</label>
+                <input type="number" id="expected-shots" placeholder="e.g., 24" class="w-full px-3 py-2 bg-slate-700 rounded text-white">
+            </div>
+        </div>
+
+        <!-- Labeling Section -->
+        <div id="labeling-section" class="hidden space-y-6">
+            <!-- Video Player -->
+            <div class="bg-slate-800 rounded-lg p-4">
+                <video id="video-player" class="w-full rounded max-h-96 mb-2" controls></video>
+                <div class="flex items-center justify-between text-sm">
+                    <div class="font-mono text-lg">
+                        Time: <span id="current-time" class="text-blue-400">0.0</span>s
+                    </div>
+                    <div class="font-mono">
+                        Recording: <span id="recording-type-display" class="text-green-400">-</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Keyboard Shortcuts -->
+            <div class="bg-slate-800 rounded-lg p-4">
+                <h3 class="font-bold mb-3">⌨️ Keyboard Shortcuts</h3>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                    <div class="bg-slate-700 p-3 rounded">
+                        <kbd class="px-2 py-1 bg-slate-600 rounded text-xs">S</kbd>
+                        <span class="ml-2">Mark Shot at current time</span>
+                    </div>
+                    <div class="bg-slate-700 p-3 rounded">
+                        <kbd class="px-2 py-1 bg-slate-600 rounded text-xs">B</kbd>
+                        <span class="ml-2">Mark Beep at current time</span>
+                    </div>
+                    <div class="bg-slate-700 p-3 rounded">
+                        <kbd class="px-2 py-1 bg-slate-600 rounded text-xs">N</kbd>
+                        <span class="ml-2">Mark Non-Shot at current time</span>
+                    </div>
+                    <div class="bg-slate-700 p-3 rounded">
+                        <kbd class="px-2 py-1 bg-slate-600 rounded text-xs">Space</kbd>
+                        <span class="ml-2">Play/Pause video</span>
+                    </div>
+                    <div class="bg-slate-700 p-3 rounded">
+                        <kbd class="px-2 py-1 bg-slate-600 rounded text-xs">Delete</kbd>
+                        <span class="ml-2">Remove nearest marker</span>
+                    </div>
+                    <div class="bg-slate-700 p-3 rounded">
+                        <kbd class="px-2 py-1 bg-slate-600 rounded text-xs">←/→</kbd>
+                        <span class="ml-2">Step backward/forward 0.1s</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Waveform -->
+            <div class="bg-slate-800 rounded-lg p-4">
+                <div class="flex justify-between items-center mb-2">
+                    <h3 class="font-bold">Audio Waveform - Click to add shot marker</h3>
+                    <div class="text-sm">
+                        <span class="text-green-400" id="shot-count">0 shots</span> |
+                        <span class="text-yellow-400" id="nonshot-count">0 non-shots</span> |
+                        <span class="text-blue-400" id="beep-count">0 beeps</span>
+                    </div>
+                </div>
+                <p class="text-xs text-slate-400 mb-2">💡 Tip: Click on waveform = add shot. Use S/B/N keys for shot/beep/non-shot at playhead.</p>
+                <canvas id="waveform" width="1400" height="280" class="w-full border border-slate-700 rounded cursor-crosshair"></canvas>
+                <div class="flex gap-4 mt-2 text-xs flex-wrap">
+                    <div class="flex items-center gap-2">
+                        <div class="w-4 h-4 bg-green-500 rounded"></div>
+                        <span>Shot</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <div class="w-4 h-4 bg-yellow-500 rounded"></div>
+                        <span>Non-Shot</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <div class="w-4 h-4 bg-blue-500 rounded"></div>
+                        <span>Beep</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <div class="w-4 h-0.5 bg-red-500"></div>
+                        <span>Playhead</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Labels List -->
+            <div class="bg-slate-800 rounded-lg p-4">
+                <div class="flex justify-between items-center mb-3">
+                    <h3 class="font-bold">📋 Labels</h3>
+                    <button onclick="clearAllLabels()" class="px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-sm">
+                        Clear All
+                    </button>
+                </div>
+                <div id="labels-list" class="space-y-2 max-h-96 overflow-y-auto"></div>
+            </div>
+
+            <!-- Export -->
+            <div class="bg-slate-800 rounded-lg p-4">
+                <h3 class="font-bold mb-3">💾 Export Training Data</h3>
+                <div class="flex gap-3">
+                    <button onclick="exportLabels()" class="px-6 py-3 bg-green-600 hover:bg-green-700 rounded font-bold">
+                        Export Labels as JSON
+                    </button>
+                    <button onclick="saveProgress()" class="px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded">
+                        Save Progress (continue later)
+                    </button>
+                </div>
+                <p class="text-xs text-slate-400 mt-2">
+                    Export creates a JSON file with all your labels. Save this file - you'll need it for training!
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let audioData = null;
+        let videoElement = null;
+        let labels = [];
+        let recordingType = null;
+        let videoFileName = '';
+        let playheadAnimationFrame = null;
+        let keyboardSetup = false;
+
+        document.getElementById('video-input').addEventListener('change', handleVideoUpload);
+        document.getElementById('labels-input').addEventListener('change', handleLabelsUpload);
+        document.getElementById('video-continue-input').addEventListener('change', handleVideoContinue);
+
+        // Setup keyboard shortcuts once when page loads
+        setupKeyboardShortcuts();
+
+        function setRecordingType(type) {
+            recordingType = type;
+            const firstBtn = document.getElementById('type-first');
+            const thirdBtn = document.getElementById('type-third');
+
+            if (type === 'first_person') {
+                firstBtn.classList.add('bg-blue-600');
+                firstBtn.classList.remove('bg-slate-700');
+                thirdBtn.classList.remove('bg-blue-600');
+                thirdBtn.classList.add('bg-slate-700');
+            } else {
+                thirdBtn.classList.add('bg-blue-600');
+                thirdBtn.classList.remove('bg-slate-700');
+                firstBtn.classList.remove('bg-blue-600');
+                firstBtn.classList.add('bg-slate-700');
+            }
+
+            document.getElementById('recording-type-display').textContent =
+                type === 'first_person' ? 'First-Person' : 'Third-Person';
+        }
+
+        async function handleVideoUpload(e) {
+            const file = e.target.files[0];
+            if (!file || !file.type.startsWith('video/')) {
+                showError('Please select a valid video file');
+                return;
+            }
+
+            if (!recordingType) {
+                showError('Please select recording type first');
+                return;
+            }
+
+            // Clear previous video's labels when starting fresh
+            labels = [];
+            videoFileName = file.name;
+            document.getElementById('expected-shots').value = '';
+
+            await loadVideoWithLabels(file);
+        }
+
+        async function loadVideoWithLabels(file) {
+            try {
+                videoElement = document.getElementById('video-player');
+                videoElement.src = URL.createObjectURL(file);
+                await new Promise(resolve => videoElement.onloadedmetadata = resolve);
+
+                videoElement.addEventListener('timeupdate', () => {
+                    document.getElementById('current-time').textContent = videoElement.currentTime.toFixed(2);
+                });
+
+                videoElement.addEventListener('play', startPlayheadAnimation);
+                videoElement.addEventListener('pause', stopPlayheadAnimation);
+                videoElement.addEventListener('seeked', drawWaveform);
+
+                // Extract audio
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const response = await fetch(videoElement.src);
+                const arrayBuffer = await response.arrayBuffer();
+                const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+                const channelData = audioBuffer.numberOfChannels > 1
+                    ? combineChannels(audioBuffer)
+                    : audioBuffer.getChannelData(0);
+
+                audioData = {
+                    data: channelData,
+                    sampleRate: audioBuffer.sampleRate,
+                    duration: audioBuffer.duration
+                };
+
+                document.getElementById('labeling-section').classList.remove('hidden');
+                document.getElementById('expected-shots-section').classList.remove('hidden');
+                updateLabelsDisplay();
+                drawWaveform();
+                setupWaveformClick();
+
+                const labelCount = labels.length;
+                const msg = labelCount > 0
+                    ? `Video loaded with ${labelCount} existing labels! Continue where you left off.`
+                    : 'Video loaded! Use keyboard shortcuts: S=shot, B=beep, N=non-shot';
+                showSuccess(msg);
+
+            } catch (err) {
+                showError('Error processing video: ' + err.message);
+                console.error(err);
+            }
+        }
+
+        function combineChannels(audioBuffer) {
+            const left = audioBuffer.getChannelData(0);
+            const right = audioBuffer.getChannelData(1);
+            const combined = new Float32Array(left.length);
+            for (let i = 0; i < left.length; i++) {
+                combined[i] = (left[i] + right[i]) / 2;
+            }
+            return combined;
+        }
+
+        function addLabel(type) {
+            if (!videoElement) return;
+
+            const time = videoElement.currentTime;
+            labels.push({
+                time: parseFloat(time.toFixed(3)),
+                type: type
+            });
+
+            // Sort by time
+            labels.sort((a, b) => a.time - b.time);
+
+            updateLabelsDisplay();
+            drawWaveform();
+            showSuccess(`Added ${type} at ${time.toFixed(2)}s`);
+        }
+
+        function removeNearestLabel() {
+            if (!videoElement || labels.length === 0) return;
+
+            const currentTime = videoElement.currentTime;
+            let nearestIdx = 0;
+            let minDist = Math.abs(labels[0].time - currentTime);
+
+            for (let i = 1; i < labels.length; i++) {
+                const dist = Math.abs(labels[i].time - currentTime);
+                if (dist < minDist) {
+                    minDist = dist;
+                    nearestIdx = i;
+                }
+            }
+
+            if (minDist < 0.5) { // Within 0.5 seconds
+                const removed = labels.splice(nearestIdx, 1)[0];
+                updateLabelsDisplay();
+                drawWaveform();
+                showSuccess(`Removed ${removed.type} at ${removed.time.toFixed(2)}s`);
+            }
+        }
+
+        function clearAllLabels() {
+            if (confirm('Are you sure you want to clear all labels?')) {
+                labels = [];
+                updateLabelsDisplay();
+                drawWaveform();
+                showSuccess('All labels cleared');
+            }
+        }
+
+        function updateLabelsDisplay() {
+            const container = document.getElementById('labels-list');
+            const shotCount = labels.filter(l => l.type === 'shot').length;
+            const nonshotCount = labels.filter(l => l.type === 'non_shot').length;
+            const beepCount = labels.filter(l => l.type === 'beep').length;
+
+            document.getElementById('shot-count').textContent = `${shotCount} shots`;
+            document.getElementById('nonshot-count').textContent = `${nonshotCount} non-shots`;
+            document.getElementById('beep-count').textContent = `${beepCount} beeps`;
+
+            if (labels.length === 0) {
+                container.innerHTML = '<p class="text-slate-400 text-sm">No labels yet. Use keyboard shortcuts or click on waveform.</p>';
+                return;
+            }
+
+            container.innerHTML = labels.map((label, idx) => {
+                const color = label.type === 'shot' ? 'green' :
+                             label.type === 'beep' ? 'blue' : 'yellow';
+                return `
+                    <div class="flex items-center justify-between bg-slate-700 p-2 rounded text-sm">
+                        <div class="flex items-center gap-3">
+                            <span class="w-3 h-3 bg-${color}-500 rounded-full"></span>
+                            <span class="font-mono">${label.time.toFixed(3)}s</span>
+                            <span class="text-slate-400">${label.type}</span>
+                        </div>
+                        <button onclick="seekToLabel(${label.time})" class="px-2 py-1 bg-slate-600 hover:bg-slate-500 rounded text-xs">
+                            Go to
+                        </button>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function seekToLabel(time) {
+            if (videoElement) {
+                videoElement.currentTime = time;
+            }
+        }
+
+        function setupKeyboardShortcuts() {
+            if (keyboardSetup) return; // Only set up once
+            keyboardSetup = true;
+
+            // Use window for global capture, but handle it in bubble phase
+            window.addEventListener('keydown', (e) => {
+                // Only ignore if actively typing in an input field
+                if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+                if (!videoElement) return;
+
+                // Check if it's one of our shortcuts
+                const key = e.key.toLowerCase();
+                const isShortcut = ['s', 'b', 'n', 'delete', 'backspace', ' ', 'arrowleft', 'arrowright'].includes(key);
+
+                if (!isShortcut) return; // Let other keys work normally
+
+                // Always prevent default and stop propagation for our shortcuts
+                e.preventDefault();
+                e.stopPropagation();
+
+                switch(key) {
+                    case 's':
+                        addLabel('shot');
+                        break;
+                    case 'b':
+                        addLabel('beep');
+                        break;
+                    case 'n':
+                        addLabel('non_shot');
+                        break;
+                    case 'delete':
+                    case 'backspace':
+                        removeNearestLabel();
+                        break;
+                    case ' ':
+                        if (videoElement.paused) {
+                            videoElement.play();
+                        } else {
+                            videoElement.pause();
+                        }
+                        break;
+                    case 'arrowleft':
+                        videoElement.currentTime = Math.max(0, videoElement.currentTime - 0.1);
+                        break;
+                    case 'arrowright':
+                        videoElement.currentTime = Math.min(videoElement.duration, videoElement.currentTime + 0.1);
+                        break;
+                }
+            });
+        }
+
+        function setupWaveformClick() {
+            const canvas = document.getElementById('waveform');
+            let clickTimeout = null;
+
+            canvas.addEventListener('click', (e) => {
+                if (!audioData) return;
+
+                // Prevent double-clicks from adding multiple labels
+                if (clickTimeout) return;
+
+                const rect = canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const width = rect.width;
+                const clickTime = (x / width) * audioData.duration;
+
+                // Seek to clicked position
+                videoElement.currentTime = clickTime;
+
+                // Just add a shot by default on click (most common action)
+                // Users can use keyboard for beep/non-shot
+                addLabel('shot');
+
+                // Prevent rapid double-clicks
+                clickTimeout = setTimeout(() => {
+                    clickTimeout = null;
+                }, 300);
+            });
+        }
+
+        function startPlayheadAnimation() {
+            let lastDrawTime = 0;
+            const drawInterval = 100; // Only redraw every 100ms (10 FPS) instead of 60 FPS
+
+            function animate(timestamp) {
+                if (timestamp - lastDrawTime >= drawInterval) {
+                    drawPlayheadOnly(); // Only redraw the playhead, not entire waveform
+                    lastDrawTime = timestamp;
+                }
+                playheadAnimationFrame = requestAnimationFrame(animate);
+            }
+            playheadAnimationFrame = requestAnimationFrame(animate);
+        }
+
+        function stopPlayheadAnimation() {
+            if (playheadAnimationFrame) {
+                cancelAnimationFrame(playheadAnimationFrame);
+                playheadAnimationFrame = null;
+            }
+            drawWaveform(); // Full redraw when stopped
+        }
+
+        let cachedCanvas = null; // Cache the waveform without playhead
+
+        function drawWaveform() {
+            const canvas = document.getElementById('waveform');
+            if (!canvas || !audioData) {
+                console.log('Cannot draw waveform:', { canvas: !!canvas, audioData: !!audioData });
+                return;
+            }
+
+            console.log('Drawing waveform with', labels.length, 'labels');
+
+            const ctx = canvas.getContext('2d');
+            const dpr = window.devicePixelRatio || 1;
+            const width = canvas.offsetWidth || canvas.clientWidth || 1400;
+            const height = canvas.offsetHeight || canvas.clientHeight || 280;
+
+            canvas.width = width * dpr;
+            canvas.height = height * dpr;
+            canvas.style.width = width + 'px';
+            canvas.style.height = height + 'px';
+            ctx.scale(dpr, dpr);
+
+            ctx.fillStyle = '#1e293b';
+            ctx.fillRect(0, 0, width, height);
+
+            const data = audioData.data;
+            const step = Math.ceil(data.length / width);
+            const amp = height / 2;
+
+            // Draw waveform
+            ctx.strokeStyle = '#3b82f6';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+
+            for (let i = 0; i < width; i++) {
+                let min = 1.0, max = -1.0;
+                for (let j = 0; j < step; j++) {
+                    const d = data[(i * step) + j] || 0;
+                    if (d < min) min = d;
+                    if (d > max) max = d;
+                }
+                ctx.moveTo(i, (1 + min) * amp);
+                ctx.lineTo(i, (1 + max) * amp);
+            }
+            ctx.stroke();
+
+            const duration = audioData.duration;
+
+            // Draw labels
+            console.log('Drawing', labels.length, 'label markers');
+            labels.forEach(label => {
+                const x = (label.time / duration) * width;
+
+                if (label.type === 'shot') {
+                    ctx.fillStyle = '#22c55e'; // green
+                    ctx.fillRect(x - 2, 0, 4, height);
+                } else if (label.type === 'beep') {
+                    ctx.fillStyle = '#3b82f6'; // blue
+                    ctx.fillRect(x - 3, 0, 6, height);
+                    ctx.font = 'bold 12px monospace';
+                    ctx.fillText('BEEP', x + 6, 15);
+                } else if (label.type === 'non_shot') {
+                    ctx.fillStyle = '#eab308'; // yellow
+                    ctx.fillRect(x - 2, 0, 4, height);
+                }
+            });
+
+            // Cache this state (without playhead) for faster redraws
+            cachedCanvas = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+            // Draw playhead on top
+            if (videoElement && !isNaN(videoElement.currentTime)) {
+                const playheadX = (videoElement.currentTime / duration) * width;
+                ctx.strokeStyle = '#ef4444'; // red
+                ctx.lineWidth = 2;
+                ctx.setLineDash([5, 5]);
+                ctx.beginPath();
+                ctx.moveTo(playheadX, 0);
+                ctx.lineTo(playheadX, height);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+        }
+
+        function drawPlayheadOnly() {
+            const canvas = document.getElementById('waveform');
+            if (!canvas || !audioData || !cachedCanvas || !videoElement) return;
+
+            const ctx = canvas.getContext('2d');
+            const width = canvas.width / (window.devicePixelRatio || 1);
+            const height = canvas.height / (window.devicePixelRatio || 1);
+            const duration = audioData.duration;
+
+            // Restore cached waveform (without playhead)
+            ctx.putImageData(cachedCanvas, 0, 0);
+
+            // Draw only the playhead
+            const playheadX = (videoElement.currentTime / duration) * width;
+            ctx.strokeStyle = '#ef4444'; // red
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath();
+            ctx.moveTo(playheadX, 0);
+            ctx.lineTo(playheadX, height);
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+
+        function exportLabels() {
+            if (labels.length === 0) {
+                showError('No labels to export!');
+                return;
+            }
+
+            const shotLabels = labels.filter(l => l.type === 'shot');
+            const expectedShots = parseInt(document.getElementById('expected-shots').value) || null;
+
+            if (expectedShots && shotLabels.length !== expectedShots) {
+                if (!confirm(`Warning: You marked ${shotLabels.length} shots but expected ${expectedShots}.\n\nContinue export anyway?`)) {
+                    return;
+                }
+            }
+
+            const exportData = {
+                video_id: videoFileName,
+                recording_type: recordingType,
+                total_shots: shotLabels.length,
+                total_labels: labels.length,
+                duration: audioData.duration,
+                labels: labels
+            };
+
+            const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `labels_${videoFileName.replace(/\.[^/.]+$/, '')}.json`;
+            a.click();
+
+            showSuccess(`Exported ${labels.length} labels for training!`);
+        }
+
+        function saveProgress() {
+            const saveData = {
+                video_id: videoFileName,
+                recording_type: recordingType,
+                expected_shots: document.getElementById('expected-shots').value,
+                labels: labels,
+                progress: true
+            };
+
+            const blob = new Blob([JSON.stringify(saveData, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `progress_${videoFileName.replace(/\.[^/.]+$/, '')}.json`;
+            a.click();
+
+            showSuccess('Progress saved! Load this file later to continue labeling.');
+        }
+
+        function handleLabelsUpload(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                try {
+                    const data = JSON.parse(event.target.result);
+
+                    videoFileName = data.video_id;
+                    recordingType = data.recording_type;
+                    labels = data.labels || [];
+
+                    setRecordingType(recordingType);
+                    if (data.expected_shots) {
+                        document.getElementById('expected-shots').value = data.expected_shots;
+                    }
+
+                    // Show the video input for continuation and disable Option 1
+                    document.getElementById('video-continue-input').classList.remove('hidden');
+                    document.getElementById('video-input').disabled = true;
+                    document.getElementById('video-input').classList.add('opacity-50', 'cursor-not-allowed');
+                    document.getElementById('json-instruction').innerHTML =
+                        `<span class="text-green-400">✅ Loaded ${labels.length} labels</span><br>Now select the matching video below: <strong>${videoFileName}</strong>`;
+
+                    updateLabelsDisplay();
+                    showSuccess(`Loaded ${labels.length} existing labels. Now select the matching video file below.`);
+                } catch (err) {
+                    showError('Invalid labels file: ' + err.message);
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        async function handleVideoContinue(e) {
+            const file = e.target.files[0];
+            if (!file || !file.type.startsWith('video/')) {
+                showError('Please select a valid video file');
+                return;
+            }
+
+            if (!recordingType || !videoFileName) {
+                showError('Please load the JSON file first');
+                return;
+            }
+
+            console.log('Loading video with existing labels:', {
+                videoFile: file.name,
+                labelCount: labels.length,
+                recordingType: recordingType
+            });
+
+            // Load video with existing labels
+            await loadVideoWithLabels(file);
+        }
+
+        function showError(msg) {
+            const errorDiv = document.getElementById('error');
+            errorDiv.textContent = msg;
+            errorDiv.classList.remove('hidden');
+            setTimeout(() => errorDiv.classList.add('hidden'), 5000);
+        }
+
+        function showSuccess(msg) {
+            const successDiv = document.getElementById('success');
+            successDiv.textContent = msg;
+            successDiv.classList.remove('hidden');
+            setTimeout(() => successDiv.classList.add('hidden'), 3000);
+        }
+
+        window.addEventListener('resize', () => {
+            if (audioData) drawWaveform();
+        });
+    </script>
+</body>
+</html>

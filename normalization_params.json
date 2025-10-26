@@ -1,0 +1,8 @@
+{
+  "global_min": -79.57684326171875,
+  "global_max": 35.962608337402344,
+  "sample_rate": 22050,
+  "segment_duration": 0.15,
+  "n_mels": 64,
+  "spec_size": 64
+}

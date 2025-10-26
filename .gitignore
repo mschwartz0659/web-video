@@ -1,0 +1,28 @@
+# Training data
+training_data/
+
+# macOS system files
+.DS_Store
+
+# Test/temporary files
+*.mp4
+*.webm
+*.mov
+*.avi
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+
+# Model backups
+*_old.h5
+*.backup
+
+# Training documentation (can regenerate)
+COLAB_*.txt
+*_FIX.md
