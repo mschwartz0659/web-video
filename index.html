@@ -113,6 +113,8 @@
                                 <div id="ticker-container" class="flex gap-2 h-full items-center px-3 bg-gradient-to-r from-transparent via-black/40 to-black/60">
                                     <!-- Shot items will be added dynamically here -->
                                 </div>
+                                <!-- Fixed timer for vertical layouts -->
+                                <div id="fixed-timer" class="hidden absolute bottom-0 w-full px-2 pb-3 pointer-events-none"></div>
                             </div>
                         </div>
                         <!-- Custom video controls below video -->
@@ -181,9 +183,11 @@
         let canvasRect = null;
         let currentShotIndex = -1;
         let tickerTimeout = null;
+        let tickerAnimationFrame = null; // For smooth timer updates
         let streamerPosition = 'bottom'; // 'top', 'bottom', 'left', 'right'
         let videoAudioContext = null; // Reuse audio context
         let videoSourceNode = null; // Track source node
+        let originalFilename = ''; // Store original filename for export
 
         document.getElementById('video-input').addEventListener('change', handleFileUpload);
 
@@ -194,61 +198,86 @@
                 return;
             }
 
+            // Store original filename (without extension) for export
+            originalFilename = file.name.replace(/\.[^/.]+$/, '');
+
             document.getElementById('processing').classList.remove('hidden');
             updateProgress(10, 'Uploading video to server...');
 
             try {
-                // Load video for playback
+                // Load video for playback - reload completely to remove old listeners
                 videoElement = document.getElementById('video-player');
+                videoElement.pause();
+                videoElement.removeAttribute('src');
+                videoElement.load(); // Reset video element
+
                 videoElement.src = URL.createObjectURL(file);
-                await new Promise(resolve => videoElement.onloadedmetadata = resolve);
+                await new Promise(resolve => {
+                    videoElement.onloadedmetadata = () => {
+                        resolve();
+                    };
+                });
 
                 // Set up custom controls
                 const seekBar = document.getElementById('seek-bar');
-                const playPauseBtn = document.getElementById('play-pause-btn');
+                seekBar.max = videoElement.duration;
+                document.getElementById('duration-display').textContent = formatTime(videoElement.duration);
 
-                videoElement.addEventListener('loadedmetadata', () => {
-                    seekBar.max = videoElement.duration;
-                    document.getElementById('duration-display').textContent = formatTime(videoElement.duration);
-                });
+                let isSeeking = false;
 
-                videoElement.addEventListener('timeupdate', () => {
+                const handleTimeUpdate = () => {
                     updateShotTicker();
-                    seekBar.value = videoElement.currentTime;
+                    if (!isSeeking) {
+                        seekBar.value = videoElement.currentTime;
+                    }
                     document.getElementById('current-time-display').textContent = formatTime(videoElement.currentTime);
+                };
+
+                const handleSeekInput = () => {
+                    isSeeking = true;
+                    videoElement.currentTime = seekBar.value;
+                };
+
+                const handleSeeked = () => {
+                    isSeeking = false;
+                    updateShotTicker(); // Update shot ticker after seeking
+                    drawWaveform();
+                };
+
+                // Remove old listeners (if any) and add new ones
+                videoElement.removeEventListener('timeupdate', handleTimeUpdate);
+                videoElement.addEventListener('timeupdate', handleTimeUpdate);
+
+                seekBar.removeEventListener('input', handleSeekInput);
+                seekBar.addEventListener('input', handleSeekInput);
+
+                videoElement.removeEventListener('seeked', handleSeeked);
+                videoElement.addEventListener('seeked', handleSeeked);
+
+                videoElement.addEventListener('seeking', () => {
+                    clearTicker();
+                    drawWaveform();
                 });
 
                 videoElement.addEventListener('play', () => {
                     document.getElementById('play-icon').classList.add('hidden');
                     document.getElementById('pause-icon').classList.remove('hidden');
                     startPlayheadAnimation();
+                    startTickerAnimation();
                 });
 
                 videoElement.addEventListener('pause', () => {
                     document.getElementById('play-icon').classList.remove('hidden');
                     document.getElementById('pause-icon').classList.add('hidden');
                     stopPlayheadAnimation();
+                    stopTickerAnimation();
                 });
 
-                videoElement.addEventListener('seeking', () => {
-                    clearTicker();
-                    drawWaveform(); // Update waveform playhead during seeking
-                });
-
-                videoElement.addEventListener('seeked', () => {
-                    drawWaveform(); // Update waveform playhead after seeking
-                });
-
-                // Seek bar control
-                seekBar.addEventListener('input', () => {
-                    videoElement.currentTime = seekBar.value;
-                });
-
-                // Set up ticker overlay to match video dimensions
-                // Use a slight delay to ensure video dimensions are available
                 videoElement.addEventListener('loadedmetadata', () => {
                     setupTickerDimensions();
                 });
+
+                window.removeEventListener('resize', setupTickerDimensions);
                 window.addEventListener('resize', setupTickerDimensions);
 
                 updateProgress(20, 'Processing with ML model...');
@@ -283,7 +312,35 @@
                     xhr.onerror = () => reject(new Error('Network error'));
                     xhr.send(formData);
 
-                    updateProgress(70, 'Processing on server...');
+                    // Simulate smooth progress during server processing with gradual slowdown
+                    let serverProgress = 70;
+                    let progressInterval;
+
+                    const updateServerProgress = () => {
+                        if (serverProgress < 95) {
+                            // Calculate increment that slows down as we approach 95%
+                            // Fast at 70-80% (10%), medium at 80-90% (10%), very slow at 90-95% (5%)
+                            let increment;
+                            if (serverProgress < 80) {
+                                increment = 0.25; // 10% in ~16 seconds
+                            } else if (serverProgress < 90) {
+                                increment = 0.15; // 10% in ~27 seconds
+                            } else {
+                                increment = 0.05; // 5% in ~40 seconds
+                            }
+
+                            serverProgress += increment;
+                            if (serverProgress > 95) serverProgress = 95; // Cap at 95%
+                            updateProgress(serverProgress, 'Processing with ML model...');
+                        }
+                    };
+
+                    progressInterval = setInterval(updateServerProgress, 400); // Update every 400ms
+
+                    // Clear interval when done
+                    xhr.addEventListener('load', () => {
+                        clearInterval(progressInterval);
+                    });
                 });
 
                 updateProgress(85, 'Analyzing results...');
@@ -295,12 +352,19 @@
 
                 const results = await response.json();
 
+                updateProgress(86, 'Extracting audio for waveform...');
+
                 // Extract audio for waveform
                 const audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 const audioResponse = await fetch(videoElement.src);
+
+                updateProgress(87, 'Loading audio data...');
                 const arrayBuffer = await audioResponse.arrayBuffer();
+
+                updateProgress(88, 'Decoding audio...');
                 const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
 
+                updateProgress(89, 'Processing audio channels...');
                 const channelData = audioBuffer.numberOfChannels > 1
                     ? combineChannels(audioBuffer)
                     : audioBuffer.getChannelData(0);
@@ -406,39 +470,93 @@
 
             if (latestShotIndex < 0) {
                 // Before any shots, just show the timer
-                container.innerHTML = `
-                    <div class="flex items-center gap-1 bg-blue-900/90 backdrop-blur-sm rounded px-3 py-1.5 flex-shrink-0 border border-blue-500/50" style="min-width: 80px;">
-                        <span class="text-white font-mono font-bold text-base">${timerValue}s</span>
-                    </div>
-                `;
+                const fixedTimerEl = document.getElementById('fixed-timer');
+
+                if (isVertical) {
+                    // For vertical: show timer in fixed position
+                    container.innerHTML = '';
+                    fixedTimerEl.classList.remove('hidden');
+                    fixedTimerEl.innerHTML = `
+                        <div class="flex items-center gap-1 bg-blue-900/90 backdrop-blur-sm rounded px-3 py-1.5 border border-blue-500/50">
+                            <span class="text-white font-mono font-bold text-base">${timerValue}s</span>
+                        </div>
+                    `;
+                } else {
+                    // For horizontal: show timer in container
+                    fixedTimerEl.classList.add('hidden');
+                    container.innerHTML = `
+                        <div class="flex items-center gap-1 bg-blue-900/90 backdrop-blur-sm rounded px-3 py-1.5 flex-shrink-0 border border-blue-500/50" style="min-width: 80px;">
+                            <span class="text-white font-mono font-bold text-base">${timerValue}s</span>
+                        </div>
+                    `;
+                }
                 return;
             }
 
-            // Always show Shot 1 (Draw) + last 4 shots
+            // Calculate how many shots can fit in the overlay
+            const overlay = document.getElementById('shot-overlay');
+            const overlayRect = overlay.getBoundingClientRect();
+
+            // Element sizes
+            const timerSize = isVertical ? 50 : 80;
+            const shotSize = isVertical ? 50 : 100; // Actual element sizes with padding
+            const spacing = 8; // gap-2 = 0.5rem = 8px
+            const padding = isVertical ? 16 : 24; // py-3 (12px top+12px bottom) or px-3
+
+            let maxShots;
+            if (isVertical) {
+                // Vertical: height = padding + timer + spacing + (shots * (shotSize + spacing))
+                const availableHeight = overlayRect.height;
+                const usedHeight = padding + timerSize + spacing;
+                const availableForShots = availableHeight - usedHeight - padding;
+                maxShots = Math.floor(availableForShots / (shotSize + spacing));
+            } else {
+                // Horizontal: width = padding + timer + spacing + (shots * (shotSize + spacing))
+                const availableWidth = overlayRect.width;
+                const usedWidth = padding + timerSize + spacing;
+                const availableForShots = availableWidth - usedWidth - padding;
+                maxShots = Math.floor(availableForShots / (shotSize + spacing));
+            }
+            maxShots = Math.max(1, Math.min(maxShots, latestShotIndex + 1)); // At least 1, at most all shots
+
+            // Build list of shots to show: always Draw, then recent shots that fit
             const shotsToShow = [];
 
             // Always include shot 0 (Draw)
             shotsToShow.push({ shot: shots[0], index: 0, isFirst: true });
 
-            // Add last 4 shots (or fewer if we don't have that many yet)
-            const lastShotsStart = Math.max(1, latestShotIndex - 3);
-            for (let i = lastShotsStart; i <= latestShotIndex; i++) {
-                shotsToShow.push({ shot: shots[i], index: i, isFirst: false });
+            // Add recent shots that fit (maxShots includes Draw, so -1 for additional)
+            if (maxShots > 1 && latestShotIndex > 0) {
+                const additionalSlots = Math.min(maxShots - 1, latestShotIndex);
+                const lastShotsStart = Math.max(1, latestShotIndex - additionalSlots + 1);
+                for (let i = lastShotsStart; i <= latestShotIndex; i++) {
+                    shotsToShow.push({ shot: shots[i], index: i, isFirst: false });
+                }
             }
 
             // Clear and rebuild
             container.innerHTML = '';
 
-            // Add timer at the start/bottom (fixed size to prevent movement)
-            const timerEl = document.createElement('div');
-            timerEl.className = 'flex items-center gap-1 bg-blue-900/90 backdrop-blur-sm rounded px-3 py-1.5 flex-shrink-0 border border-blue-500/50';
-            timerEl.style.minWidth = isVertical ? '100%' : '80px';
-            timerEl.innerHTML = `
-                <span class="text-white font-mono font-bold text-base">${timerValue}s</span>
-            `;
+            // Handle timer placement based on layout
+            const fixedTimerEl = document.getElementById('fixed-timer');
 
-            // For vertical layout, add timer at the end (bottom)
-            if (!isVertical) {
+            if (isVertical) {
+                // For vertical: use fixed timer at bottom (outside scrolling container)
+                fixedTimerEl.classList.remove('hidden');
+                fixedTimerEl.innerHTML = `
+                    <div class="flex items-center gap-1 bg-blue-900/90 backdrop-blur-sm rounded px-3 py-1.5 border border-blue-500/50">
+                        <span class="text-white font-mono font-bold text-base">${timerValue}s</span>
+                    </div>
+                `;
+            } else {
+                // For horizontal: hide fixed timer, add to container instead
+                fixedTimerEl.classList.add('hidden');
+                const timerEl = document.createElement('div');
+                timerEl.className = 'flex items-center gap-1 bg-blue-900/90 backdrop-blur-sm rounded px-3 py-1.5 flex-shrink-0 border border-blue-500/50';
+                timerEl.style.minWidth = '80px';
+                timerEl.innerHTML = `
+                    <span class="text-white font-mono font-bold text-base">${timerValue}s</span>
+                `;
                 container.appendChild(timerEl);
             }
 
@@ -466,11 +584,6 @@
 
                 container.appendChild(shotEl);
             });
-
-            // For vertical layout, add timer at the bottom
-            if (isVertical) {
-                container.appendChild(timerEl);
-            }
         }
 
         function clearTicker() {
@@ -542,8 +655,8 @@
                     overlay.style.top = '0';
                     overlay.style.left = '0';
                     overlay.style.width = videoWidth + 'px';
-                    overlay.style.height = '48px';
-                    overlay.className = 'absolute h-12 overflow-hidden pointer-events-none';
+                    overlay.style.height = '60px';
+                    overlay.className = 'absolute overflow-hidden pointer-events-none';
                     container.className = 'flex gap-2 h-full items-center px-3 bg-gradient-to-r from-transparent via-black/40 to-black/60';
                     break;
 
@@ -551,15 +664,15 @@
                     overlay.style.bottom = '0'; // At bottom of video (controls are now separate below)
                     overlay.style.left = '0';
                     overlay.style.width = videoWidth + 'px';
-                    overlay.style.height = '48px';
-                    overlay.className = 'absolute h-12 overflow-hidden pointer-events-none';
+                    overlay.style.height = '60px';
+                    overlay.className = 'absolute overflow-hidden pointer-events-none';
                     container.className = 'flex gap-2 h-full items-center px-3 bg-gradient-to-r from-transparent via-black/40 to-black/60';
                     break;
 
                 case 'left':
                     overlay.style.top = '0';
                     overlay.style.left = '0';
-                    overlay.style.width = '140px';
+                    overlay.style.width = '160px';
                     overlay.style.height = videoHeight + 'px';
                     overlay.className = 'absolute overflow-hidden pointer-events-none';
                     container.className = 'flex flex-col-reverse gap-2 h-full justify-start py-3 px-2 bg-gradient-to-r from-black/60 via-black/40 to-transparent';
@@ -568,7 +681,7 @@
                 case 'right':
                     overlay.style.top = '0';
                     overlay.style.right = '0';
-                    overlay.style.width = '140px';
+                    overlay.style.width = '160px';
                     overlay.style.height = videoHeight + 'px';
                     overlay.className = 'absolute overflow-hidden pointer-events-none';
                     container.className = 'flex flex-col-reverse gap-2 h-full justify-start py-3 px-2 bg-gradient-to-l from-black/60 via-black/40 to-transparent';
@@ -726,6 +839,21 @@
                 playheadAnimationFrame = null;
             }
             drawWaveform();
+        }
+
+        function startTickerAnimation() {
+            function animate() {
+                updateShotTicker();
+                tickerAnimationFrame = requestAnimationFrame(animate);
+            }
+            animate();
+        }
+
+        function stopTickerAnimation() {
+            if (tickerAnimationFrame) {
+                cancelAnimationFrame(tickerAnimationFrame);
+                tickerAnimationFrame = null;
+            }
         }
 
         function drawWaveform() {
@@ -977,8 +1105,16 @@
             const progressBar = document.getElementById('export-progress-bar');
             const progressText = document.getElementById('export-progress-text');
 
-            // Hide format choice buttons, show progress
-            modalContent.querySelector('.space-y-3').parentElement.classList.add('hidden');
+            // Hide format choice text, buttons, and cancel button
+            const textElement = modalContent.querySelector('.text-sm.text-slate-300');
+            const buttonsContainer = modalContent.querySelector('.space-y-3');
+            const cancelButton = modalContent.querySelector('button[onclick*="export-modal"]');
+
+            if (textElement) textElement.classList.add('hidden');
+            if (buttonsContainer) buttonsContainer.classList.add('hidden');
+            if (cancelButton) cancelButton.classList.add('hidden');
+
+            // Show progress
             progressContainer.classList.remove('hidden');
 
             progressBar.style.width = '0%';
@@ -1057,7 +1193,7 @@
                         const url = URL.createObjectURL(blob);
                         const a = document.createElement('a');
                         a.href = url;
-                        a.download = 'uspsa-analysis-with-overlay.webm';
+                        a.download = `${originalFilename}_uspsaml.webm`;
                         a.click();
 
                         progressBar.style.width = '100%';
@@ -1229,7 +1365,7 @@
 
             if (isVertical) {
                 // Vertical - timer at bottom
-                const itemHeight = Math.floor(streamerHeight * 0.04);
+                const itemHeight = Math.floor(height * 0.04); // Use video height, not streamerHeight
                 const padding = Math.floor(overlayW * 0.05);
                 const yPos = overlayY + overlayH - padding - itemHeight;
 
@@ -1311,33 +1447,56 @@
 
             // Calculate responsive font sizes
             const baseFontSize = Math.floor(Math.min(width, height) * 0.025);
-            const timerValue = ((currentTime - beep.time) / 1000).toFixed(2);
+
+            // Timer stops at last shot, doesn't keep running
+            let timerValue;
+            if (lastPassedIndex === shots.length - 1 && currentTime > shots[shots.length - 1].time) {
+                // After last shot, freeze timer at last shot time
+                timerValue = ((shots[shots.length - 1].time - beep.time) / 1000).toFixed(2);
+            } else {
+                // Before last shot, show current time
+                timerValue = ((currentTime - beep.time) / 1000).toFixed(2);
+            }
 
             if (isVertical) {
-                // Vertical layout - timer at bottom, shots above
-                const itemHeight = Math.floor(streamerHeight * 0.04);
+                // Vertical layout - timer at bottom, shots above scrolling upward
+                const itemHeight = Math.floor(height * 0.04); // Use video height, not streamerHeight
                 const padding = Math.floor(overlayW * 0.05);
-                let yPos = overlayY + overlayH - padding - itemHeight;
 
-                // Timer
+                // Timer at bottom
+                const timerYPos = overlayY + overlayH - padding - itemHeight;
                 ctx.fillStyle = 'rgba(59, 130, 246, 0.95)';
-                ctx.fillRect(overlayX + padding, yPos, overlayW - 2 * padding, itemHeight);
+                ctx.fillRect(overlayX + padding, timerYPos, overlayW - 2 * padding, itemHeight);
                 ctx.fillStyle = 'white';
                 ctx.font = `bold ${baseFontSize}px monospace`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                ctx.fillText(timerValue + 's', overlayX + overlayW / 2, yPos + itemHeight / 2);
+                ctx.fillText(timerValue + 's', overlayX + overlayW / 2, timerYPos + itemHeight / 2);
 
-                yPos -= itemHeight + padding / 2;
+                // Calculate how many shots can fit dynamically
+                const availableHeight = overlayH - padding - itemHeight - padding; // Subtract timer and padding
+                const itemSpacing = itemHeight + padding / 2;
+                const maxShots = Math.floor(availableHeight / itemSpacing);
 
-                // Show Draw + last 3 shots
-                const shotsToShow = [0];
-                const lastStart = Math.max(1, lastPassedIndex - 2);
-                for (let i = lastStart; i <= lastPassedIndex; i++) {
-                    shotsToShow.push(i);
+                // Build list of shots to show: always Draw, then recent shots that fit
+                const shotsToShow = [0]; // Always show Draw
+
+                // If we have room for more than just Draw, add recent shots
+                if (maxShots > 1 && lastPassedIndex > 0) {
+                    // We have room for (maxShots - 1) additional shots after Draw
+                    const additionalSlots = maxShots - 1;
+                    const lastStart = Math.max(1, lastPassedIndex - additionalSlots + 1);
+                    for (let i = lastStart; i <= lastPassedIndex; i++) {
+                        shotsToShow.push(i);
+                    }
                 }
 
-                for (let i = shotsToShow.length - 1; i >= 0; i--) {
+                // Draw shots from bottom to top (Draw at bottom just above timer, most recent at top)
+                // Start just above timer and work upward
+                let yPos = timerYPos - itemHeight - padding / 2;
+
+                // Iterate forward through shotsToShow so Draw is at bottom, most recent at top
+                for (let i = 0; i < shotsToShow.length; i++) {
                     const shotIdx = shotsToShow[i];
                     const split = shotIdx === 0
                         ? ((shots[0].time - beep.time) / 1000).toFixed(2)
@@ -1346,14 +1505,25 @@
                     const label = shotIdx === 0 ? 'Draw' : `Shot ${shotIdx + 1}`;
                     const isLatest = shotIdx === lastPassedIndex;
 
-                    ctx.fillStyle = isLatest ? 'rgba(34, 197, 94, 0.95)' : 'rgba(0, 0, 0, 0.6)';
-                    ctx.fillRect(overlayX + padding, yPos, overlayW - 2 * padding, itemHeight);
-                    ctx.fillStyle = isLatest ? 'white' : '#cbd5e1';
-                    ctx.font = `bold ${baseFontSize * 0.7}px monospace`;
-                    ctx.textAlign = 'left';
-                    ctx.fillText(label, overlayX + padding * 1.5, yPos + itemHeight * 0.35);
-                    ctx.font = `bold ${baseFontSize}px monospace`;
-                    ctx.fillText(split + 's', overlayX + padding * 1.5, yPos + itemHeight * 0.75);
+                    // Only draw if within bounds (not off top of overlay)
+                    if (yPos >= overlayY + padding) {
+                        // Draw background box
+                        ctx.fillStyle = isLatest ? 'rgba(34, 197, 94, 0.95)' : 'rgba(0, 0, 0, 0.6)';
+                        ctx.fillRect(overlayX + padding, yPos, overlayW - 2 * padding, itemHeight);
+
+                        // Draw label on left side
+                        ctx.fillStyle = isLatest ? 'white' : '#cbd5e1';
+                        ctx.font = `bold ${baseFontSize * 0.6}px monospace`;
+                        ctx.textAlign = 'left';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText(label, overlayX + padding * 2, yPos + itemHeight / 2);
+
+                        // Draw split time on right side
+                        ctx.font = `bold ${baseFontSize * 0.9}px monospace`;
+                        ctx.textAlign = 'right';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText(split + 's', overlayX + overlayW - padding * 2, yPos + itemHeight / 2);
+                    }
 
                     yPos -= itemHeight + padding / 2;
                 }
@@ -1376,11 +1546,24 @@
 
                 xPos += timerWidth + padding;
 
-                // Show Draw + last 3 shots
-                const shotsToShow = [0];
-                const lastStart = Math.max(1, lastPassedIndex - 2);
-                for (let i = lastStart; i <= lastPassedIndex; i++) {
-                    shotsToShow.push(i);
+                // Calculate how many shots can fit dynamically
+                // Use smaller shot width to fit more shots across the video width
+                const shotWidth = Math.floor(width * 0.065); // Reduced from 0.09 to fit more
+                const shotSpacing = shotWidth + padding / 2;
+                const availableWidth = overlayW - (xPos - overlayX) - padding;
+                const maxShots = Math.floor(availableWidth / shotSpacing);
+
+                // Build list of shots to show: always Draw, then recent shots that fit
+                const shotsToShow = [0]; // Always show Draw
+
+                // If we have room for more than just Draw, add recent shots
+                if (maxShots > 1 && lastPassedIndex > 0) {
+                    // We have room for (maxShots - 1) additional shots after Draw
+                    const additionalSlots = maxShots - 1;
+                    const lastStart = Math.max(1, lastPassedIndex - additionalSlots + 1);
+                    for (let i = lastStart; i <= lastPassedIndex; i++) {
+                        shotsToShow.push(i);
+                    }
                 }
 
                 shotsToShow.forEach(shotIdx => {
@@ -1388,20 +1571,27 @@
                         ? ((shots[0].time - beep.time) / 1000).toFixed(2)
                         : ((shots[shotIdx].time - shots[shotIdx - 1].time) / 1000).toFixed(2);
 
-                    const label = shotIdx === 0 ? 'Draw' : `S${shotIdx + 1}`;
+                    const label = shotIdx === 0 ? 'Draw' : `Shot ${shotIdx + 1}`;
                     const isLatest = shotIdx === lastPassedIndex;
-                    const shotWidth = Math.floor(width * 0.09);
 
                     if (xPos + shotWidth < overlayX + overlayW - padding) {
+                        // Draw background box
                         ctx.fillStyle = isLatest ? 'rgba(34, 197, 94, 0.95)' : 'rgba(0, 0, 0, 0.6)';
                         ctx.fillRect(xPos, yCenter - itemHeight / 2, shotWidth, itemHeight);
+
                         ctx.fillStyle = isLatest ? 'white' : '#cbd5e1';
-                        ctx.font = `bold ${baseFontSize * 0.65}px monospace`;
-                        ctx.textAlign = 'left';
-                        ctx.textBaseline = 'middle';
-                        ctx.fillText(label, xPos + padding / 2, yCenter - itemHeight * 0.15);
-                        ctx.font = `bold ${baseFontSize}px monospace`;
-                        ctx.fillText(split + 's', xPos + padding / 2, yCenter + itemHeight * 0.15);
+
+                        // Draw label at top
+                        ctx.font = `bold ${baseFontSize * 0.55}px monospace`;
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'top';
+                        ctx.fillText(label, xPos + shotWidth / 2, yCenter - itemHeight * 0.35);
+
+                        // Draw split time at bottom
+                        ctx.font = `bold ${baseFontSize * 0.9}px monospace`;
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'bottom';
+                        ctx.fillText(split + 's', xPos + shotWidth / 2, yCenter + itemHeight * 0.35);
 
                         xPos += shotWidth + padding / 2;
                     }
@@ -1479,7 +1669,7 @@
                         const url = URL.createObjectURL(mp4Blob);
                         const a = document.createElement('a');
                         a.href = url;
-                        a.download = 'uspsa-analysis-with-overlay.mp4';
+                        a.download = `${originalFilename}_uspsaml.mp4`;
                         a.click();
 
                         progressBar.style.width = '100%';

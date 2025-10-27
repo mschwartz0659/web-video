@@ -472,7 +472,26 @@ def convert_to_mp4():
                     'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1',
                     webm_path
                 ]
-                duration = float(subprocess.check_output(duration_cmd).decode().strip())
+                duration_str = subprocess.check_output(duration_cmd).decode().strip()
+
+                # Handle cases where duration is 'N/A' or invalid
+                try:
+                    duration = float(duration_str)
+                except (ValueError, TypeError):
+                    # If we can't get duration from container, try from stream
+                    stream_duration_cmd = [
+                        ffprobe_path, '-v', 'error', '-select_streams', 'v:0',
+                        '-show_entries', 'stream=duration', '-of',
+                        'default=noprint_wrappers=1:nokey=1', webm_path
+                    ]
+                    stream_duration_str = subprocess.check_output(stream_duration_cmd).decode().strip()
+                    try:
+                        duration = float(stream_duration_str)
+                    except (ValueError, TypeError):
+                        # Fall back to a default if we still can't get duration
+                        # Progress tracking won't be accurate but conversion will still work
+                        duration = 1.0
+                        print(f"Warning: Could not determine video duration, progress tracking may be inaccurate")
 
                 # Convert WebM to MP4 with FFmpeg
                 cmd = [
@@ -498,9 +517,14 @@ def convert_to_mp4():
                 # Parse progress
                 for line in process.stdout:
                     if line.startswith('out_time_ms='):
-                        time_ms = int(line.split('=')[1])
-                        progress = min(99, (time_ms / 1000000 / duration) * 100)
-                        conversion_jobs[job_id]['progress'] = progress
+                        try:
+                            time_ms_str = line.split('=')[1].strip()
+                            time_ms = int(time_ms_str)
+                            progress = min(99, (time_ms / 1000000 / duration) * 100)
+                            conversion_jobs[job_id]['progress'] = progress
+                        except (ValueError, IndexError):
+                            # Skip lines with 'N/A' or invalid values
+                            pass
 
                 process.wait()
 
