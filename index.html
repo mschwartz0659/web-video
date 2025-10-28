@@ -152,11 +152,11 @@
                         <!-- Custom video controls below video -->
                         <div id="custom-controls" class="bg-slate-900 rounded-b p-2 border-t border-slate-700">
                             <div class="flex items-center gap-2">
-                                <button id="play-pause-btn" onclick="togglePlayPause()" class="w-8 h-8 flex items-center justify-center bg-blue-600 hover:bg-blue-700 rounded transition text-white">
-                                    <svg id="play-icon" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                <button id="play-pause-btn" onclick="togglePlayPause()" class="w-8 h-8 flex items-center justify-center bg-blue-600 hover:bg-blue-700 rounded-md transition text-white flex-shrink-0 shadow-sm">
+                                    <svg id="play-icon" width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
                                         <path d="M8 5v14l11-7z"/>
                                     </svg>
-                                    <svg id="pause-icon" class="hidden" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                    <svg id="pause-icon" class="hidden" width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
                                         <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/>
                                     </svg>
                                 </button>
@@ -1821,9 +1821,39 @@
                 }
             });
 
+            // Disable/enable shot stream positions based on layout
+            updateShotStreamOptionsForLayout(mode);
+
             // Apply layout if second video is loaded
             if (secondVideoElement && secondVideoElement.src) {
                 applyVideoLayout();
+            }
+        }
+
+        function updateShotStreamOptionsForLayout(layout) {
+            const rightBtn = document.getElementById('pos-right');
+
+            if (layout === 'pip') {
+                // Disable 'right' position in PIP mode
+                rightBtn.disabled = true;
+                rightBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                rightBtn.classList.remove('hover:bg-slate-600', 'hover:bg-blue-700');
+
+                // If 'right' is currently selected, switch to 'none'
+                if (streamerPosition === 'right') {
+                    setStreamerPosition('none');
+                }
+            } else {
+                // Enable 'right' position in other layouts
+                rightBtn.disabled = false;
+                rightBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+
+                // Restore hover states based on current selection
+                if (streamerPosition === 'right') {
+                    rightBtn.classList.add('hover:bg-blue-700');
+                } else {
+                    rightBtn.classList.add('hover:bg-slate-600');
+                }
             }
         }
 
