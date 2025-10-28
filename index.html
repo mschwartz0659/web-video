@@ -315,9 +315,9 @@
                 const handleSeekInput = () => {
                     isSeeking = true;
                     videoElement.currentTime = seekBar.value;
-                    // Sync second video in merge mode
+                    // Sync second video in merge mode with offset
                     if (isMergeMode && secondVideoElement && secondVideoElement.src) {
-                        secondVideoElement.currentTime = seekBar.value;
+                        secondVideoElement.currentTime = seekBar.value + syncOffset;
                     }
                 };
 
@@ -325,6 +325,9 @@
                     isSeeking = false;
                     updateShotTicker(); // Update shot ticker after seeking
                     drawWaveform();
+                    if (isMergeMode && secondAudioData) {
+                        drawWaveform2();
+                    }
                 };
 
                 // Remove old listeners (if any) and add new ones
