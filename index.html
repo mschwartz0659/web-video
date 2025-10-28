@@ -355,10 +355,6 @@
                     document.getElementById('pause-icon').classList.remove('hidden');
                     startPlayheadAnimation();
                     startTickerAnimation();
-                    // Ensure second video is synced before playing
-                    if (isMergeMode && secondVideoElement && secondVideoElement.src) {
-                        syncSecondVideoPosition();
-                    }
                 });
 
                 videoElement.addEventListener('pause', () => {
@@ -1229,14 +1225,18 @@
         function togglePlayPause() {
             if (!videoElement) return;
             if (videoElement.paused) {
+                // Sync second video BEFORE playing to avoid race condition
+                if (isMergeMode && secondVideoElement && secondVideoElement.src) {
+                    syncSecondVideoPosition();
+                }
                 videoElement.play();
-                // Sync second video in merge mode
+                // Play second video in merge mode
                 if (isMergeMode && secondVideoElement && secondVideoElement.src) {
                     secondVideoElement.play();
                 }
             } else {
                 videoElement.pause();
-                // Sync second video in merge mode
+                // Pause second video in merge mode
                 if (isMergeMode && secondVideoElement && secondVideoElement.src) {
                     secondVideoElement.pause();
                 }
@@ -2186,9 +2186,6 @@
                 document.getElementById('waveform-2-section').classList.remove('hidden');
                 document.getElementById('waveform-1-subtitle').classList.remove('hidden');
 
-                // Draw second waveform
-                drawWaveform2();
-
                 // Update shot counts
                 const shotCount2 = secondMarkers.filter(m => m.type === 'shot').length;
                 document.getElementById('shot-count-2').textContent = `${shotCount2} shots`;
@@ -2199,14 +2196,22 @@
                 // Show second video with selected layout
                 applyVideoLayout();
 
+                // Sync second video position and draw waveform with correct playhead
+                const syncAndDraw = () => {
+                    syncSecondVideoPosition();
+                    // Redraw both waveforms to show correct playhead positions
+                    drawWaveform();
+                    drawWaveform2();
+                };
+
                 // Wait for second video metadata to be loaded, then sync
                 if (secondVideoElement.readyState >= 1) {
                     // Metadata already loaded
-                    syncSecondVideoPosition();
+                    syncAndDraw();
                 } else {
                     // Wait for metadata
                     secondVideoElement.addEventListener('loadedmetadata', () => {
-                        syncSecondVideoPosition();
+                        syncAndDraw();
                     }, { once: true });
                 }
 
