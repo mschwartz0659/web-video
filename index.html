@@ -174,9 +174,13 @@
                     </div>
                 </div>
 
+            <!-- Primary Video Waveform -->
             <div class="bg-slate-800 rounded-lg p-4">
                 <div class="flex justify-between items-center mb-2">
-                    <h3 class="font-bold">Interactive Waveform Editor</h3>
+                    <h3 class="font-bold">
+                        <span id="waveform-1-title">Interactive Waveform Editor</span>
+                        <span id="waveform-1-subtitle" class="hidden text-sm font-normal text-slate-400">- Primary Video</span>
+                    </h3>
                     <span class="text-sm text-slate-400" id="shot-count">0 shots</span>
                 </div>
                 <p class="text-xs text-slate-400 mb-2">
@@ -195,6 +199,38 @@
                     <div class="flex items-center gap-2">
                         <div class="w-4 h-0.5 bg-red-500"></div>
                         <span>Playhead</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Second Video Waveform (hidden until second video loaded) -->
+            <div id="waveform-2-section" class="hidden bg-slate-800 rounded-lg p-4">
+                <div class="flex justify-between items-center mb-2">
+                    <h3 class="font-bold">
+                        Interactive Waveform Editor <span class="text-sm font-normal text-slate-400">- Secondary Video</span>
+                    </h3>
+                    <span class="text-sm text-slate-400" id="shot-count-2">0 shots</span>
+                </div>
+                <p class="text-xs text-slate-400 mb-2">
+                    <strong>Click</strong> to add shot | <strong>Drag</strong> to move | <strong>Right-click</strong> to delete | <strong>Shift+Click</strong> beep to move
+                </p>
+                <canvas id="waveform-2" width="1400" height="200" class="w-full border border-slate-700 rounded cursor-crosshair"></canvas>
+                <div class="flex gap-4 mt-2 text-xs flex-wrap">
+                    <div class="flex items-center gap-2">
+                        <div class="w-4 h-4 bg-blue-500 rounded"></div>
+                        <span>Timer Beep</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <div class="w-4 h-4 bg-green-500 rounded"></div>
+                        <span>Shot</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <div class="w-4 h-0.5 bg-red-500"></div>
+                        <span>Playhead</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <div class="w-4 h-4 bg-purple-500 rounded"></div>
+                        <span>Sync Offset</span>
                     </div>
                 </div>
             </div>
@@ -227,6 +263,9 @@
         let secondVideoData = null; // Will store beep time, shots, etc.
         let layoutMode = 'side-by-side'; // 'side-by-side', 'above-below', 'pip'
         let secondOriginalFilename = '';
+        let secondAudioData = null;
+        let secondMarkers = [];
+        let syncOffset = 0; // Time offset in seconds between videos (video2 time - video1 time)
 
         document.getElementById('video-input').addEventListener('change', handleFileUpload);
         document.getElementById('second-video-input').addEventListener('change', handleSecondVideoUpload);
@@ -984,6 +1023,92 @@
             }
 
             document.getElementById('shot-count').textContent = `${shots.length} shots`;
+        }
+
+        function drawWaveform2() {
+            const canvas = document.getElementById('waveform-2');
+            if (!canvas || !secondAudioData) return;
+
+            const ctx = canvas.getContext('2d');
+            const dpr = window.devicePixelRatio || 1;
+            const width = canvas.offsetWidth || canvas.clientWidth || 1400;
+            const height = canvas.offsetHeight || canvas.clientHeight || 200;
+
+            canvas.width = width * dpr;
+            canvas.height = height * dpr;
+            canvas.style.width = width + 'px';
+            canvas.style.height = height + 'px';
+            ctx.scale(dpr, dpr);
+
+            ctx.fillStyle = '#1e293b';
+            ctx.fillRect(0, 0, width, height);
+
+            const data = secondAudioData.data;
+            const step = Math.ceil(data.length / width);
+            const amp = height / 2;
+
+            // Draw waveform
+            ctx.strokeStyle = '#3b82f6';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+
+            for (let i = 0; i < width; i++) {
+                let min = 1.0, max = -1.0;
+                for (let j = 0; j < step; j++) {
+                    const d = data[(i * step) + j] || 0;
+                    if (d < min) min = d;
+                    if (d > max) max = d;
+                }
+                ctx.moveTo(i, (1 + min) * amp);
+                ctx.lineTo(i, (1 + max) * amp);
+            }
+            ctx.stroke();
+
+            const duration = secondAudioData.duration;
+            const shots = secondMarkers.filter(m => m.type === 'shot');
+            let shotNum = 0;
+
+            // Draw markers
+            secondMarkers.forEach(m => {
+                const x = (m.time / 1000 / duration) * width;
+
+                if (m.type === 'beep') {
+                    ctx.fillStyle = '#3b82f6';
+                    ctx.fillRect(x - 3, 0, 6, height);
+                    ctx.font = 'bold 14px monospace';
+                    ctx.fillText('BEEP', x + 6, 20);
+                } else if (m.type === 'shot') {
+                    shotNum++;
+                    const opacity = Math.min(1, m.amplitude + 0.3);
+                    ctx.fillStyle = `rgba(34, 197, 94, ${opacity})`;
+                    ctx.fillRect(x - 2, 0, 4, height);
+                    ctx.font = '11px monospace';
+                    ctx.fillStyle = '#22c55e';
+                    ctx.fillText(shotNum, x + 5, 35);
+                }
+            });
+
+            // Draw sync offset indicator (purple)
+            if (syncOffset !== 0) {
+                const offsetX = (Math.abs(syncOffset) / duration) * width;
+                ctx.fillStyle = '#a855f7';
+                ctx.fillRect(offsetX - 2, 0, 4, height);
+                ctx.font = 'bold 12px monospace';
+                ctx.fillText(`SYNC ${syncOffset > 0 ? '+' : ''}${syncOffset.toFixed(2)}s`, offsetX + 6, 50);
+            }
+
+            // Draw playhead (synchronized with primary)
+            if (secondVideoElement && !isNaN(secondVideoElement.currentTime)) {
+                const playheadX = (secondVideoElement.currentTime / duration) * width;
+                ctx.strokeStyle = '#ef4444';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([5, 5]);
+                ctx.beginPath();
+                ctx.moveTo(playheadX, 0);
+                ctx.lineTo(playheadX, height);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
         }
 
         function displayResults() {
@@ -1832,27 +1957,41 @@
 
         function updateShotStreamOptionsForLayout(layout) {
             const rightBtn = document.getElementById('pos-right');
+            const bottomBtn = document.getElementById('pos-bottom');
 
             if (layout === 'pip') {
-                // Disable 'right' position in PIP mode
+                // Disable 'right' and 'bottom' positions in PIP mode
+                // (secondary video in bottom-right would overlap with these)
                 rightBtn.disabled = true;
                 rightBtn.classList.add('opacity-50', 'cursor-not-allowed');
                 rightBtn.classList.remove('hover:bg-slate-600', 'hover:bg-blue-700');
 
-                // If 'right' is currently selected, switch to 'none'
-                if (streamerPosition === 'right') {
+                bottomBtn.disabled = true;
+                bottomBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                bottomBtn.classList.remove('hover:bg-slate-600', 'hover:bg-blue-700');
+
+                // If 'right' or 'bottom' is currently selected, switch to 'none'
+                if (streamerPosition === 'right' || streamerPosition === 'bottom') {
                     setStreamerPosition('none');
                 }
             } else {
-                // Enable 'right' position in other layouts
+                // Enable 'right' and 'bottom' positions in other layouts
                 rightBtn.disabled = false;
                 rightBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                bottomBtn.disabled = false;
+                bottomBtn.classList.remove('opacity-50', 'cursor-not-allowed');
 
                 // Restore hover states based on current selection
                 if (streamerPosition === 'right') {
                     rightBtn.classList.add('hover:bg-blue-700');
                 } else {
                     rightBtn.classList.add('hover:bg-slate-600');
+                }
+
+                if (streamerPosition === 'bottom') {
+                    bottomBtn.classList.add('hover:bg-blue-700');
+                } else {
+                    bottomBtn.classList.add('hover:bg-slate-600');
                 }
             }
         }
@@ -1915,7 +2054,7 @@
             secondOriginalFilename = file.name.replace(/\.[^/.]+$/, '');
 
             // Show filename
-            document.getElementById('second-video-name').textContent = file.name;
+            document.getElementById('second-video-name').textContent = file.name + ' (Processing...)';
 
             // Load video for playback
             if (!secondVideoElement) {
@@ -1928,9 +2067,58 @@
             // Show second video with selected layout
             applyVideoLayout();
 
-            // TODO: Process second video with ML in Sub-Phase 2.2
-            console.log('Second video loaded:', file.name);
-            console.log('Layout mode:', layoutMode);
+            // Process second video with ML
+            try {
+                const threshold = parseFloat(document.getElementById('threshold-slider').value);
+                const formData = new FormData();
+                formData.append('video', file);
+                formData.append('threshold', threshold);
+
+                const response = await fetch(`${SERVER_URL}/analyze`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Server returned ${response.status}`);
+                }
+
+                secondVideoData = await response.json();
+                secondAudioData = secondVideoData.audioData;
+                secondMarkers = [
+                    { time: secondVideoData.beepTime, type: 'beep' },
+                    ...secondVideoData.shots.map(s => ({ time: s, type: 'shot' }))
+                ];
+
+                // Calculate sync offset based on beep times
+                if (audioData && secondAudioData) {
+                    const primaryBeepTime = markers.find(m => m.type === 'beep')?.time || 0;
+                    const secondaryBeepTime = secondMarkers.find(m => m.type === 'beep')?.time || 0;
+                    syncOffset = secondaryBeepTime - primaryBeepTime;
+
+                    console.log('Sync offset calculated:', syncOffset, 'seconds');
+                    console.log('Primary beep:', primaryBeepTime, 'Secondary beep:', secondaryBeepTime);
+                }
+
+                // Update filename display
+                document.getElementById('second-video-name').textContent = file.name;
+
+                // Show second waveform
+                document.getElementById('waveform-2-section').classList.remove('hidden');
+                document.getElementById('waveform-1-subtitle').classList.remove('hidden');
+
+                // Draw second waveform
+                drawWaveform2();
+
+                // Update shot counts
+                const shotCount2 = secondMarkers.filter(m => m.type === 'shot').length;
+                document.getElementById('shot-count-2').textContent = `${shotCount2} shots`;
+
+            } catch (err) {
+                console.error('Error processing second video:', err);
+                showError('Error processing second video: ' + err.message);
+                document.getElementById('second-video-name').textContent = file.name + ' (Error)';
+            }
         }
     </script>
 </body>
