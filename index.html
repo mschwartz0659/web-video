@@ -326,6 +326,8 @@
                     updateShotTicker(); // Update shot ticker after seeking
                     drawWaveform();
                     if (isMergeMode && secondAudioData) {
+                        // Ensure second video is perfectly synced after seek completes
+                        syncSecondVideoPosition();
                         drawWaveform2();
                     }
                 };
@@ -353,6 +355,10 @@
                     document.getElementById('pause-icon').classList.remove('hidden');
                     startPlayheadAnimation();
                     startTickerAnimation();
+                    // Ensure second video is synced before playing
+                    if (isMergeMode && secondVideoElement && secondVideoElement.src) {
+                        syncSecondVideoPosition();
+                    }
                 });
 
                 videoElement.addEventListener('pause', () => {
@@ -1911,6 +1917,17 @@
 
         // ===== MERGE MODE FUNCTIONS =====
 
+        function syncSecondVideoPosition() {
+            if (!secondVideoElement || !videoElement || !isMergeMode) return;
+
+            const targetTime = videoElement.currentTime + syncOffset;
+
+            // Only update if difference is significant (more than 0.1 seconds)
+            if (Math.abs(secondVideoElement.currentTime - targetTime) > 0.1) {
+                secondVideoElement.currentTime = targetTime;
+            }
+        }
+
         function toggleMergeMode() {
             isMergeMode = !isMergeMode;
             const secondVideoSection = document.getElementById('second-video-section');
@@ -2179,13 +2196,19 @@
                 // Mute second video to prevent audio echo
                 secondVideoElement.muted = true;
 
-                // Sync second video to current primary video position
-                if (videoElement && !isNaN(videoElement.currentTime)) {
-                    secondVideoElement.currentTime = videoElement.currentTime + syncOffset;
-                }
-
                 // Show second video with selected layout
                 applyVideoLayout();
+
+                // Wait for second video metadata to be loaded, then sync
+                if (secondVideoElement.readyState >= 1) {
+                    // Metadata already loaded
+                    syncSecondVideoPosition();
+                } else {
+                    // Wait for metadata
+                    secondVideoElement.addEventListener('loadedmetadata', () => {
+                        syncSecondVideoPosition();
+                    }, { once: true });
+                }
 
                 progressBar.style.width = '100%';
                 progressText.textContent = '✅ Second video ready!';
