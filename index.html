@@ -317,7 +317,9 @@
                     videoElement.currentTime = seekBar.value;
                     // Sync second video in merge mode with offset
                     if (isMergeMode && secondVideoElement && secondVideoElement.src) {
-                        secondVideoElement.currentTime = seekBar.value + syncOffset;
+                        const targetTime = parseFloat(seekBar.value) + syncOffset;
+                        // Clamp to valid range
+                        secondVideoElement.currentTime = Math.max(0, Math.min(targetTime, secondVideoElement.duration || targetTime));
                     }
                 };
 
@@ -999,6 +1001,28 @@
             const shots = markers.filter(m => m.type === 'shot');
             let shotNum = 0;
 
+            // In merge mode, shade inactive regions
+            if (isMergeMode && secondVideoElement && secondVideoElement.src && secondAudioData) {
+                const primaryDuration = duration;
+                const secondaryDuration = secondAudioData.duration;
+
+                // Shade beginning if primary starts later (negative offset means primary delayed)
+                if (syncOffset < 0) {
+                    const shadeEndX = (Math.abs(syncOffset) / primaryDuration) * width;
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                    ctx.fillRect(0, 0, shadeEndX, height);
+                }
+
+                // Shade end based on which video ends first
+                const secondaryEndInPrimary = secondaryDuration - syncOffset;
+                if (secondaryEndInPrimary < primaryDuration) {
+                    // Secondary ends before primary, shade primary's end
+                    const shadeStartX = (secondaryEndInPrimary / primaryDuration) * width;
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                    ctx.fillRect(shadeStartX, 0, width - shadeStartX, height);
+                }
+            }
+
             // Draw markers
             markers.forEach(m => {
                 const x = (m.time / 1000 / duration) * width;
@@ -1078,6 +1102,28 @@
             const duration = secondAudioData.duration;
             const shots = secondMarkers.filter(m => m.type === 'shot');
             let shotNum = 0;
+
+            // Shade inactive regions
+            if (audioData && videoElement) {
+                const primaryDuration = audioData.duration;
+                const secondaryDuration = duration;
+
+                // Shade beginning if secondary starts later (positive offset means secondary delayed)
+                if (syncOffset > 0) {
+                    const shadeEndX = (syncOffset / secondaryDuration) * width;
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                    ctx.fillRect(0, 0, shadeEndX, height);
+                }
+
+                // Shade end based on which video ends first
+                const primaryEndInSecondary = primaryDuration + syncOffset;
+                if (primaryEndInSecondary < secondaryDuration) {
+                    // Primary ends before secondary, shade secondary's end
+                    const shadeStartX = (primaryEndInSecondary / secondaryDuration) * width;
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                    ctx.fillRect(shadeStartX, 0, width - shadeStartX, height);
+                }
+            }
 
             // Draw markers
             secondMarkers.forEach(m => {
@@ -1222,18 +1268,41 @@
             a.click();
         }
 
-        function togglePlayPause() {
+        async function togglePlayPause() {
             if (!videoElement) return;
             if (videoElement.paused) {
                 // Sync second video BEFORE playing to avoid race condition
                 if (isMergeMode && secondVideoElement && secondVideoElement.src) {
-                    syncSecondVideoPosition();
+                    const primaryTime = videoElement.currentTime;
+                    const targetTime = primaryTime + syncOffset;
+                    const currentSecondTime = secondVideoElement.currentTime;
+                    const diff = Math.abs(currentSecondTime - targetTime);
+
+                    const needsSeek = diff > 0.01; // Very tight threshold to catch any drift
+
+                    if (needsSeek) {
+                        // Seek BOTH videos to ensure they go through the same seek operation
+                        // This is critical - when both videos seek, they stay in sync during playback
+                        videoElement.currentTime = primaryTime;
+                        secondVideoElement.currentTime = targetTime;
+
+                        // Wait for both seeks to complete
+                        await Promise.all([
+                            new Promise(resolve => {
+                                videoElement.addEventListener('seeked', resolve, { once: true });
+                            }),
+                            new Promise(resolve => {
+                                secondVideoElement.addEventListener('seeked', resolve, { once: true });
+                            })
+                        ]);
+                    }
                 }
-                videoElement.play();
-                // Play second video in merge mode
+                // Play both videos together after sync is complete
+                const playPromises = [videoElement.play()];
                 if (isMergeMode && secondVideoElement && secondVideoElement.src) {
-                    secondVideoElement.play();
+                    playPromises.push(secondVideoElement.play());
                 }
+                await Promise.all(playPromises);
             } else {
                 videoElement.pause();
                 // Pause second video in merge mode
@@ -2079,6 +2148,12 @@
             secondVideoFile = file;
             secondOriginalFilename = file.name.replace(/\.[^/.]+$/, '');
 
+            // Pause primary video during processing to maintain sync
+            const wasPlaying = videoElement && !videoElement.paused;
+            if (wasPlaying) {
+                videoElement.pause();
+            }
+
             // Show processing modal
             const modal = document.getElementById('export-modal');
             const progressBar = document.getElementById('export-progress-bar');
@@ -2143,8 +2218,6 @@
                     });
                 });
 
-                console.log('Second video markers created:', secondMarkers.length, 'markers');
-
                 progressBar.style.width = '90%';
                 progressText.textContent = 'Calculating sync offset...';
 
@@ -2153,9 +2226,6 @@
                     const primaryBeepTime = markers.find(m => m.type === 'beep')?.time || 0;
                     const secondaryBeepTime = secondMarkers.find(m => m.type === 'beep')?.time || 0;
                     syncOffset = (secondaryBeepTime - primaryBeepTime) / 1000; // Convert to seconds
-
-                    console.log('Sync offset calculated:', syncOffset, 'seconds');
-                    console.log('Primary beep:', primaryBeepTime / 1000, 's, Secondary beep:', secondaryBeepTime / 1000, 's');
                 }
 
                 progressBar.style.width = '93%';
@@ -2196,22 +2266,20 @@
                 // Show second video with selected layout
                 applyVideoLayout();
 
-                // Sync second video position and draw waveform with correct playhead
-                const syncAndDraw = () => {
-                    syncSecondVideoPosition();
-                    // Redraw both waveforms to show correct playhead positions
+                // Draw waveforms (don't sync position yet - let both start at 0:00)
+                const drawWaveforms = () => {
                     drawWaveform();
                     drawWaveform2();
                 };
 
-                // Wait for second video metadata to be loaded, then sync
+                // Wait for second video metadata to be loaded, then draw
                 if (secondVideoElement.readyState >= 1) {
                     // Metadata already loaded
-                    syncAndDraw();
+                    drawWaveforms();
                 } else {
                     // Wait for metadata
                     secondVideoElement.addEventListener('loadedmetadata', () => {
-                        syncAndDraw();
+                        drawWaveforms();
                     }, { once: true });
                 }
 
