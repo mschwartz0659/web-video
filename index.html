@@ -343,6 +343,9 @@
                 videoElement.addEventListener('seeking', () => {
                     clearTicker();
                     drawWaveform();
+                    if (isMergeMode && secondAudioData) {
+                        drawWaveform2();
+                    }
                 });
 
                 videoElement.addEventListener('play', () => {
@@ -920,6 +923,9 @@
         function startPlayheadAnimation() {
             function animate() {
                 drawWaveform();
+                if (isMergeMode && secondAudioData) {
+                    drawWaveform2();
+                }
                 playheadAnimationFrame = requestAnimationFrame(animate);
             }
             animate();
@@ -2096,23 +2102,43 @@
                 progressText.textContent = 'Analyzing shots...';
 
                 secondVideoData = await response.json();
-                secondAudioData = secondVideoData.audioData;
-                secondMarkers = [
-                    { time: secondVideoData.beepTime, type: 'beep' },
-                    ...secondVideoData.shots.map(s => ({ time: s, type: 'shot' }))
-                ];
+
+                console.log('Second video data received:', secondVideoData);
+
+                // Create markers from ML results (times are in seconds, convert to ms)
+                secondMarkers = [];
+
+                // Add beep marker
+                secondMarkers.push({
+                    time: secondVideoData.beep_time * 1000,
+                    type: 'beep',
+                    amplitude: 1.0,
+                    id: 'beep-2'
+                });
+
+                // Add shot markers
+                secondVideoData.shots.forEach((shot, i) => {
+                    secondMarkers.push({
+                        time: shot.time * 1000,
+                        type: 'shot',
+                        amplitude: shot.confidence,
+                        id: `shot-2-${Date.now()}-${i}`
+                    });
+                });
+
+                console.log('Second video markers created:', secondMarkers.length, 'markers');
 
                 progressBar.style.width = '90%';
                 progressText.textContent = 'Calculating sync offset...';
 
-                // Calculate sync offset based on beep times
-                if (audioData && secondAudioData) {
+                // Calculate sync offset based on beep times (times are in ms, convert to seconds)
+                if (audioData && markers.length > 0 && secondMarkers.length > 0) {
                     const primaryBeepTime = markers.find(m => m.type === 'beep')?.time || 0;
                     const secondaryBeepTime = secondMarkers.find(m => m.type === 'beep')?.time || 0;
-                    syncOffset = secondaryBeepTime - primaryBeepTime;
+                    syncOffset = (secondaryBeepTime - primaryBeepTime) / 1000; // Convert to seconds
 
                     console.log('Sync offset calculated:', syncOffset, 'seconds');
-                    console.log('Primary beep:', primaryBeepTime, 'Secondary beep:', secondaryBeepTime);
+                    console.log('Primary beep:', primaryBeepTime / 1000, 's, Secondary beep:', secondaryBeepTime / 1000, 's');
                 }
 
                 progressBar.style.width = '93%';
