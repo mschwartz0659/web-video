@@ -2176,6 +2176,14 @@
                 const shotCount2 = secondMarkers.filter(m => m.type === 'shot').length;
                 document.getElementById('shot-count-2').textContent = `${shotCount2} shots`;
 
+                // Mute second video to prevent audio echo
+                secondVideoElement.muted = true;
+
+                // Sync second video to current primary video position
+                if (videoElement && !isNaN(videoElement.currentTime)) {
+                    secondVideoElement.currentTime = videoElement.currentTime + syncOffset;
+                }
+
                 // Show second video with selected layout
                 applyVideoLayout();
 
