@@ -135,6 +135,7 @@
                             <div id="video-wrapper" class="relative inline-block">
                                 <video id="video-player" class="rounded-t max-h-96"></video>
                                 <!-- Shot Streamer - Position dynamically controlled -->
+                                <!-- TODO Sub-Phase 2.6: Update to span merged video container in all layouts -->
                                 <div id="shot-overlay" class="absolute h-12 overflow-hidden pointer-events-none">
                                     <div id="ticker-container" class="flex gap-2 h-full items-center px-3 bg-gradient-to-r from-transparent via-black/40 to-black/60">
                                         <!-- Shot items will be added dynamically here -->
@@ -151,11 +152,11 @@
                         <!-- Custom video controls below video -->
                         <div id="custom-controls" class="bg-slate-900 rounded-b p-2 border-t border-slate-700">
                             <div class="flex items-center gap-2">
-                                <button id="play-pause-btn" onclick="togglePlayPause()" class="w-8 h-8 flex items-center justify-center bg-blue-600 hover:bg-blue-700 rounded transition">
-                                    <svg id="play-icon" width="14" height="14" viewBox="0 0 24 24" fill="white">
+                                <button id="play-pause-btn" onclick="togglePlayPause()" class="w-8 h-8 flex items-center justify-center bg-blue-600 hover:bg-blue-700 rounded transition text-white">
+                                    <svg id="play-icon" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
                                         <path d="M8 5v14l11-7z"/>
                                     </svg>
-                                    <svg id="pause-icon" class="hidden" width="14" height="14" viewBox="0 0 24 24" fill="white">
+                                    <svg id="pause-icon" class="hidden" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
                                         <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/>
                                     </svg>
                                 </button>
@@ -182,7 +183,7 @@
                 <p class="text-xs text-slate-400 mb-2">
                     <strong>Click</strong> to add shot | <strong>Drag</strong> to move | <strong>Right-click</strong> to delete | <strong>Shift+Click</strong> beep to move
                 </p>
-                <canvas id="waveform" width="1400" height="280" class="w-full border border-slate-700 rounded cursor-crosshair"></canvas>
+                <canvas id="waveform" width="1400" height="200" class="w-full border border-slate-700 rounded cursor-crosshair"></canvas>
                 <div class="flex gap-4 mt-2 text-xs flex-wrap">
                     <div class="flex items-center gap-2">
                         <div class="w-4 h-4 bg-blue-500 rounded"></div>
@@ -1832,10 +1833,11 @@
             const wrapper1 = document.getElementById('video-wrapper');
             const wrapper2 = document.getElementById('video-wrapper-2');
 
-            // Reset classes
+            // Reset classes and styles
             container.className = 'relative inline-block';
             wrapper1.className = 'relative inline-block';
             wrapper2.className = 'relative inline-block';
+            wrapper2.style.width = ''; // Clear any inline width
 
             switch(layoutMode) {
                 case 'side-by-side':
@@ -1853,11 +1855,11 @@
                     break;
 
                 case 'pip':
-                    // Primary video fills container, secondary in bottom-right (~30% width)
+                    // Primary video fills container, secondary in bottom-right (~35% width)
                     container.className = 'relative inline-block';
                     wrapper1.className = 'relative inline-block';
                     wrapper2.className = 'absolute bottom-4 right-4 border-2 border-white rounded shadow-lg';
-                    wrapper2.style.width = '30%';
+                    wrapper2.style.width = '35%';
                     wrapper2.classList.remove('hidden');
                     break;
             }
