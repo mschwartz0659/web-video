@@ -2077,7 +2077,7 @@
                 formData.append('video', file);
                 formData.append('threshold', threshold);
 
-                const response = await fetch(`${SERVER_URL}/analyze`, {
+                const response = await fetch(`${SERVER_URL}/api/analyze-video`, {
                     method: 'POST',
                     body: formData
                 });
