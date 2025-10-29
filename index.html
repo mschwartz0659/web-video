@@ -375,6 +375,15 @@
                     setupTickerDimensions();
                 });
 
+                // Handle video end - pause and reset both videos
+                videoElement.addEventListener('ended', () => {
+                    if (isMergeMode && secondVideoElement && secondVideoElement.src) {
+                        secondVideoElement.pause();
+                        secondVideoElement.currentTime = 0;
+                    }
+                    videoElement.currentTime = 0;
+                });
+
                 window.removeEventListener('resize', setupTickerDimensions);
                 window.addEventListener('resize', setupTickerDimensions);
 
@@ -2343,6 +2352,15 @@
 
                 // Mute second video to prevent audio echo
                 secondVideoElement.muted = true;
+
+                // Handle secondary video end - pause and reset both videos
+                secondVideoElement.addEventListener('ended', () => {
+                    if (videoElement) {
+                        videoElement.pause();
+                        videoElement.currentTime = 0;
+                    }
+                    secondVideoElement.currentTime = 0;
+                });
 
                 // Show second video with selected layout
                 applyVideoLayout();
