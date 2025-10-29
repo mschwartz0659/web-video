@@ -1358,7 +1358,14 @@
                 if (isMergeMode && secondVideoElement && secondVideoElement.src) {
                     playPromises.push(secondVideoElement.play());
                 }
-                await Promise.all(playPromises);
+                try {
+                    await Promise.all(playPromises);
+                } catch (err) {
+                    // Ignore AbortError from play() being interrupted by pause()
+                    if (err.name !== 'AbortError') {
+                        console.error('Error playing videos:', err);
+                    }
+                }
             } else {
                 videoElement.pause();
                 // Pause second video in merge mode
