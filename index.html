@@ -519,12 +519,18 @@
             }
         }
 
+        function getMergedShots() {
+            // All shots come from primary video only (secondary shots are auto-mirrored copies)
+            // Just return primary shots
+            return markers.filter(m => m.type === 'shot');
+        }
+
         function updateShotTicker() {
             if (!videoElement || !markers.length) return;
 
             const currentTime = videoElement.currentTime * 1000; // Convert to ms
             const beep = markers.find(m => m.type === 'beep');
-            const shots = markers.filter(m => m.type === 'shot');
+            const shots = getMergedShots();
 
             if (!beep) return;
 
@@ -832,10 +838,27 @@
                         time: time,
                         type: 'shot',
                         amplitude: 0.8,
-                        id: `shot-${Date.now()}`
+                        id: `shot-${Date.now()}`,
+                        source: 'video1'
                     };
                     markers.push(newMarker);
                     markers.sort((a, b) => a.time - b.time);
+
+                    // Mirror to second video if in merge mode
+                    if (isMergeMode && secondVideoElement && secondVideoElement.src) {
+                        const mirroredTime = time + (syncOffset * 1000);
+                        const mirroredMarker = {
+                            time: mirroredTime,
+                            type: 'shot',
+                            amplitude: 0.8,
+                            id: `shot-2-mirrored-${newMarker.id}`,
+                            source: 'video1'
+                        };
+                        secondMarkers.push(mirroredMarker);
+                        secondMarkers.sort((a, b) => a.time - b.time);
+                        drawWaveform2();
+                    }
+
                     markAsEdited();
                     drawWaveform();
                     displayResults();
@@ -851,6 +874,18 @@
                     const time = Math.max(0, Math.min((x / rect.width) * audioData.duration * 1000, audioData.duration * 1000));
                     draggedMarker.time = time;
                     markers.sort((a, b) => a.time - b.time);
+
+                    // Mirror drag to second video if in merge mode
+                    if (isMergeMode && secondVideoElement && secondVideoElement.src && draggedMarker.type === 'shot') {
+                        const mirroredTime = time + (syncOffset * 1000);
+                        const mirroredMarker = secondMarkers.find(m => m.id === `shot-2-mirrored-${draggedMarker.id}`);
+                        if (mirroredMarker) {
+                            mirroredMarker.time = mirroredTime;
+                            secondMarkers.sort((a, b) => a.time - b.time);
+                            drawWaveform2();
+                        }
+                    }
+
                     drawWaveform();
                     displayResults();
                 } else {
@@ -878,6 +913,13 @@
 
                 if (clickedMarker && clickedMarker.type === 'shot') {
                     markers = markers.filter(m => m.id !== clickedMarker.id);
+
+                    // Mirror deletion to second video if in merge mode
+                    if (isMergeMode && secondVideoElement && secondVideoElement.src) {
+                        secondMarkers = secondMarkers.filter(m => m.id !== `shot-2-mirrored-${clickedMarker.id}`);
+                        drawWaveform2();
+                    }
+
                     markAsEdited();
                     drawWaveform();
                     displayResults();
@@ -2232,7 +2274,7 @@
 
                 console.log('Second video data received:', secondVideoData);
 
-                // Create markers from ML results (times are in seconds, convert to ms)
+                // Only use beep from secondary video - shots will be mirrored from primary
                 secondMarkers = [];
 
                 // Add beep marker
@@ -2240,27 +2282,31 @@
                     time: secondVideoData.beep_time * 1000,
                     type: 'beep',
                     amplitude: 1.0,
-                    id: 'beep-2'
-                });
-
-                // Add shot markers
-                secondVideoData.shots.forEach((shot, i) => {
-                    secondMarkers.push({
-                        time: shot.time * 1000,
-                        type: 'shot',
-                        amplitude: shot.confidence,
-                        id: `shot-2-${Date.now()}-${i}`
-                    });
+                    id: 'beep-2',
+                    source: 'video2'
                 });
 
                 progressBar.style.width = '90%';
                 progressText.textContent = 'Calculating sync offset...';
 
                 // Calculate sync offset based on beep times (times are in ms, convert to seconds)
-                if (audioData && markers.length > 0 && secondMarkers.length > 0) {
+                if (audioData && markers.length > 0) {
                     const primaryBeepTime = markers.find(m => m.type === 'beep')?.time || 0;
-                    const secondaryBeepTime = secondMarkers.find(m => m.type === 'beep')?.time || 0;
+                    const secondaryBeepTime = secondVideoData.beep_time * 1000;
                     syncOffset = (secondaryBeepTime - primaryBeepTime) / 1000; // Convert to seconds
+
+                    // Auto-mirror all primary shots to secondary
+                    const primaryShots = markers.filter(m => m.type === 'shot');
+                    primaryShots.forEach(shot => {
+                        secondMarkers.push({
+                            time: shot.time + (syncOffset * 1000), // Convert to secondary timeline
+                            type: 'shot',
+                            amplitude: shot.amplitude,
+                            id: `shot-2-mirrored-${shot.id}`,
+                            source: 'video1' // Track that this came from primary
+                        });
+                    });
+                    secondMarkers.sort((a, b) => a.time - b.time);
                 }
 
                 progressBar.style.width = '93%';
