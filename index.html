@@ -122,12 +122,16 @@
                             <button onclick="setLayoutMode('above-below')" id="layout-above-below" class="px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-xs transition">Above-Below</button>
                             <button onclick="setLayoutMode('pip')" id="layout-pip" class="px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-xs transition">PIP</button>
                         </div>
+                        <div class="h-4 w-px bg-slate-600"></div>
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" id="swap-positions-checkbox" onchange="toggleSwapPositions()" class="w-4 h-4 rounded border-slate-600 bg-slate-700 text-blue-600 focus:ring-blue-500 focus:ring-offset-slate-800">
+                            <span class="text-slate-400 text-xs">Swap Positions</span>
+                        </label>
                     </div>
                 </div>
-            </div>
 
                 <!-- Video player with controls -->
-                <div class="flex justify-center">
+                <div class="flex justify-center mt-4">
                     <div class="inline-block">
                         <!-- Video Container - supports single and dual video layouts -->
                         <div id="videos-container" class="relative inline-block">
@@ -266,6 +270,7 @@
         let secondAudioData = null;
         let secondMarkers = [];
         let syncOffset = 0; // Time offset in seconds between videos (video2 time - video1 time)
+        let swapPositions = false; // Swap visual positions of videos
 
         document.getElementById('video-input').addEventListener('change', handleFileUpload);
         document.getElementById('second-video-input').addEventListener('change', handleSecondVideoUpload);
@@ -2096,36 +2101,66 @@
             const wrapper1 = document.getElementById('video-wrapper');
             const wrapper2 = document.getElementById('video-wrapper-2');
 
+            // Determine which is "first" and "second" based on swap setting
+            const firstWrapper = swapPositions ? wrapper2 : wrapper1;
+            const secondWrapper = swapPositions ? wrapper1 : wrapper2;
+
             // Reset classes and styles
             container.className = 'relative inline-block';
             wrapper1.className = 'relative inline-block';
             wrapper2.className = 'relative inline-block';
-            wrapper2.style.width = ''; // Clear any inline width
+            wrapper1.style.width = '';
+            wrapper2.style.width = '';
+            wrapper1.style.order = '';
+            wrapper2.style.order = '';
+            wrapper1.style.zIndex = '';
+            wrapper2.style.zIndex = '';
 
             switch(layoutMode) {
                 case 'side-by-side':
                     container.className = 'relative flex gap-2';
-                    wrapper1.className = 'relative flex-1';
-                    wrapper2.className = 'relative flex-1';
+                    firstWrapper.className = 'relative flex-1';
+                    secondWrapper.className = 'relative flex-1';
+                    firstWrapper.style.order = '1';
+                    secondWrapper.style.order = '2';
                     wrapper2.classList.remove('hidden');
                     break;
 
                 case 'above-below':
                     container.className = 'relative flex flex-col gap-2';
-                    wrapper1.className = 'relative';
-                    wrapper2.className = 'relative';
+                    firstWrapper.className = 'relative';
+                    secondWrapper.className = 'relative';
+                    firstWrapper.style.order = '1';
+                    secondWrapper.style.order = '2';
                     wrapper2.classList.remove('hidden');
                     break;
 
                 case 'pip':
-                    // Primary video fills container, secondary in bottom-right (~35% width)
                     container.className = 'relative inline-block';
-                    wrapper1.className = 'relative inline-block';
-                    wrapper2.className = 'absolute bottom-4 right-4 border-2 border-white rounded shadow-lg';
-                    wrapper2.style.width = '35%';
+
+                    if (swapPositions) {
+                        // wrapper2 is main, wrapper1 is pip
+                        wrapper2.className = 'relative inline-block';
+                        wrapper2.style.zIndex = '1';
+                        wrapper1.className = 'absolute bottom-4 right-4 border-2 border-white rounded shadow-lg';
+                        wrapper1.style.width = '35%';
+                        wrapper1.style.zIndex = '10';
+                    } else {
+                        // wrapper1 is main, wrapper2 is pip
+                        wrapper1.className = 'relative inline-block';
+                        wrapper1.style.zIndex = '1';
+                        wrapper2.className = 'absolute bottom-4 right-4 border-2 border-white rounded shadow-lg';
+                        wrapper2.style.width = '35%';
+                        wrapper2.style.zIndex = '10';
+                    }
                     wrapper2.classList.remove('hidden');
                     break;
             }
+        }
+
+        function toggleSwapPositions() {
+            swapPositions = document.getElementById('swap-positions-checkbox').checked;
+            applyVideoLayout();
         }
 
         function resetVideoLayout() {
