@@ -205,10 +205,16 @@
             <!-- Primary Video Waveform -->
             <div class="bg-slate-800 rounded-lg p-4">
                 <div class="flex justify-between items-center mb-2">
-                    <h3 class="font-bold">
-                        <span id="waveform-1-title">Interactive Waveform Editor</span>
-                        <span id="waveform-1-subtitle" class="hidden text-sm font-normal text-slate-400">- Primary Video</span>
-                    </h3>
+                    <div class="flex items-center gap-3">
+                        <h3 class="font-bold">
+                            <span id="waveform-1-title">Interactive Waveform Editor</span>
+                            <span id="waveform-1-subtitle" class="hidden text-sm font-normal text-slate-400">- Primary Video</span>
+                        </h3>
+                        <label id="audio-toggle-1" class="hidden flex items-center gap-2 cursor-pointer">
+                            <input type="radio" name="audio-source" value="primary" checked onchange="toggleAudioSource('primary')" class="w-4 h-4 text-blue-600 focus:ring-blue-500 focus:ring-offset-slate-800">
+                            <span class="text-xs text-slate-400">Audio</span>
+                        </label>
+                    </div>
                     <span class="text-sm text-slate-400" id="shot-count">0 shots</span>
                 </div>
                 <p class="text-xs text-slate-400 mb-2">
@@ -234,9 +240,15 @@
             <!-- Second Video Waveform (hidden until second video loaded) -->
             <div id="waveform-2-section" class="hidden bg-slate-800 rounded-lg p-4">
                 <div class="flex justify-between items-center mb-2">
-                    <h3 class="font-bold">
-                        Waveform Viewer <span class="text-sm font-normal text-slate-400">- Secondary Video (View Only)</span>
-                    </h3>
+                    <div class="flex items-center gap-3">
+                        <h3 class="font-bold">
+                            Waveform Viewer <span class="text-sm font-normal text-slate-400">- Secondary Video (View Only)</span>
+                        </h3>
+                        <label id="audio-toggle-2" class="flex items-center gap-2 cursor-pointer">
+                            <input type="radio" name="audio-source" value="secondary" onchange="toggleAudioSource('secondary')" class="w-4 h-4 text-blue-600 focus:ring-blue-500 focus:ring-offset-slate-800">
+                            <span class="text-xs text-slate-400">Audio</span>
+                        </label>
+                    </div>
                     <span class="text-sm text-slate-400" id="shot-count-2">0 shots</span>
                 </div>
                 <p class="text-xs text-slate-400 mb-2">
@@ -1351,6 +1363,18 @@
                     openSyncOffsetModal();
                 }
             });
+        }
+
+        function toggleAudioSource(source) {
+            if (source === 'primary') {
+                // Unmute primary, mute secondary
+                if (videoElement) videoElement.muted = false;
+                if (secondVideoElement) secondVideoElement.muted = true;
+            } else if (source === 'secondary') {
+                // Mute primary, unmute secondary
+                if (videoElement) videoElement.muted = true;
+                if (secondVideoElement) secondVideoElement.muted = false;
+            }
         }
 
         function displayResults() {
@@ -2482,6 +2506,9 @@
                 document.getElementById('waveform-2-section').classList.remove('hidden');
                 document.getElementById('waveform-1-subtitle').classList.remove('hidden');
 
+                // Show audio toggle controls
+                document.getElementById('audio-toggle-1').classList.remove('hidden');
+
                 // Setup waveform 2 interaction
                 setupWaveform2Interaction();
 
@@ -2489,7 +2516,8 @@
                 const shotCount2 = secondMarkers.filter(m => m.type === 'shot').length;
                 document.getElementById('shot-count-2').textContent = `${shotCount2} shots`;
 
-                // Mute second video to prevent audio echo
+                // Set default audio to primary video (unmute primary, mute secondary)
+                videoElement.muted = false;
                 secondVideoElement.muted = true;
 
                 // Handle secondary video end - pause and reset both videos
