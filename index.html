@@ -647,7 +647,7 @@
 
             // Element sizes (measured from actual rendered elements)
             const timerSize = isVertical ? 50 : 80;
-            const shotSize = isVertical ? 35 : 100; // Vertical: actual measured height ~32-35px including spacing
+            const shotSize = isVertical ? 35 : 110; // Horizontal: ~110px width including text, Vertical: ~35px height
             const spacing = 8; // gap-2 = 0.5rem = 8px
             const padding = isVertical ? 16 : 24; // py-3 (12px top+12px bottom) or px-3
 
@@ -1860,9 +1860,9 @@
                         progressText.textContent = 'Finalizing video...';
                         progressBar.style.width = '95%';
 
-                        // Generate merged filename
+                        // Generate merged filename using stored original filenames
                         const video1Name = originalFilename || 'video1';
-                        const video2Name = secondVideoElement.src.split('/').pop().split('.')[0] || 'video2';
+                        const video2Name = secondOriginalFilename || 'video2';
                         const filename = `${video1Name}-vs-${video2Name}_uspsaml.webm`;
 
                         const url = URL.createObjectURL(blob);
@@ -1891,10 +1891,10 @@
                         exportVideo1.remove();
                         exportVideo2.remove();
 
-                        // Generate merged filename for MP4
+                        // Generate merged filename for MP4 using stored original filenames
                         const video1Name = originalFilename || 'video1';
-                        const video2Name = secondVideoElement.src.split('/').pop().split('.')[0] || 'video2';
-                        const mergedFilename = `${video1Name}-vs-${video2Name}_uspsaml`;
+                        const video2Name = secondOriginalFilename || 'video2';
+                        const mergedFilename = `${video1Name}-vs-${video2Name}`;
 
                         await convertWebMToMP4(blob, progressBar, progressText, mergedFilename);
                     }
@@ -1903,12 +1903,35 @@
                 progressText.textContent = 'Rendering merged video...';
                 progressBar.style.width = '10%';
 
-                recorder.start(1000);
-
-                // Start both videos
+                // Start both videos and wait for them to be ready
                 exportVideo1.currentTime = 0;
                 exportVideo2.currentTime = syncOffset; // Apply sync offset
-                await Promise.all([exportVideo1.play(), audioSourceVideo.play()]);
+
+                // Wait for both videos to seek to start positions
+                await Promise.all([
+                    new Promise(resolve => {
+                        const checkReady1 = () => {
+                            if (exportVideo1.readyState >= 2) resolve();
+                            else setTimeout(checkReady1, 10);
+                        };
+                        checkReady1();
+                    }),
+                    new Promise(resolve => {
+                        const checkReady2 = () => {
+                            if (exportVideo2.readyState >= 2) resolve();
+                            else setTimeout(checkReady2, 10);
+                        };
+                        checkReady2();
+                    })
+                ]);
+
+                // Play videos (only play the non-audio ones)
+                exportVideo1.muted = true;
+                exportVideo2.muted = true;
+                await Promise.all([exportVideo1.play(), exportVideo2.play()]);
+
+                // Unmute the audio source
+                audioSourceVideo.muted = false;
 
                 const duration = Math.max(exportVideo1.duration, exportVideo2.duration - syncOffset);
                 const beep = markers.find(m => m.type === 'beep');
@@ -1916,6 +1939,9 @@
 
                 let frameCount = 0;
                 let lastProgressUpdate = 0;
+
+                // Start recorder after videos are playing
+                recorder.start(1000);
 
                 function renderFrame() {
                     // Clear canvas
@@ -1928,9 +1954,13 @@
                         exportVideo2.currentTime = targetTime2;
                     }
 
-                    // Draw videos on canvas
-                    ctx.drawImage(exportVideo1, video1X, video1Y, video1W, video1H);
-                    ctx.drawImage(exportVideo2, video2X, video2Y, video2W, video2H);
+                    // Draw videos on canvas (only if frames are available)
+                    if (exportVideo1.readyState >= 2) {
+                        ctx.drawImage(exportVideo1, video1X, video1Y, video1W, video1H);
+                    }
+                    if (exportVideo2.readyState >= 2) {
+                        ctx.drawImage(exportVideo2, video2X, video2Y, video2W, video2H);
+                    }
 
                     // Draw shot streamer overlay (if enabled and not 'none')
                     if (streamerPosition !== 'none' && beep && shots.length > 0) {
