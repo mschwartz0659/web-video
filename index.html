@@ -1928,38 +1928,52 @@
                 // Play videos (only play the non-audio ones)
                 exportVideo1.muted = true;
                 exportVideo2.muted = true;
-                await Promise.all([exportVideo1.play(), exportVideo2.play()]);
 
-                // Unmute the audio source
+                // Play both videos simultaneously
+                await exportVideo1.play();
+                await exportVideo2.play();
+
+                // Unmute the audio source after both are playing
                 audioSourceVideo.muted = false;
 
-                const duration = Math.max(exportVideo1.duration, exportVideo2.duration - syncOffset);
+                // Calculate actual duration - use shortest video duration
+                const duration = Math.min(exportVideo1.duration, exportVideo2.duration);
                 const beep = markers.find(m => m.type === 'beep');
                 const shots = getMergedShots();
 
                 let frameCount = 0;
                 let lastProgressUpdate = 0;
+                let isRecording = true;
 
                 // Start recorder after videos are playing
                 recorder.start(1000);
 
                 function renderFrame() {
+                    if (!isRecording) return;
+
+                    // Check if we've reached the end
+                    if (exportVideo1.ended || exportVideo2.ended || exportVideo1.currentTime >= duration) {
+                        isRecording = false;
+                        exportVideo1.pause();
+                        exportVideo2.pause();
+                        recorder.stop();
+                        return;
+                    }
+
                     // Clear canvas
                     ctx.fillStyle = '#000000';
                     ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
-                    // Sync video2 with video1 + offset
-                    const targetTime2 = exportVideo1.currentTime + syncOffset;
-                    if (Math.abs(exportVideo2.currentTime - targetTime2) > 0.1) {
-                        exportVideo2.currentTime = targetTime2;
-                    }
-
                     // Draw videos on canvas (only if frames are available)
-                    if (exportVideo1.readyState >= 2) {
-                        ctx.drawImage(exportVideo1, video1X, video1Y, video1W, video1H);
-                    }
-                    if (exportVideo2.readyState >= 2) {
-                        ctx.drawImage(exportVideo2, video2X, video2Y, video2W, video2H);
+                    try {
+                        if (exportVideo1.readyState >= 2 && !exportVideo1.ended) {
+                            ctx.drawImage(exportVideo1, video1X, video1Y, video1W, video1H);
+                        }
+                        if (exportVideo2.readyState >= 2 && !exportVideo2.ended) {
+                            ctx.drawImage(exportVideo2, video2X, video2Y, video2W, video2H);
+                        }
+                    } catch (err) {
+                        console.error('Error drawing video frame:', err);
                     }
 
                     // Draw shot streamer overlay (if enabled and not 'none')
@@ -1977,13 +1991,7 @@
                         lastProgressUpdate = now;
                     }
 
-                    if (exportVideo1.currentTime < duration && !exportVideo1.paused && !exportVideo1.ended) {
-                        requestAnimationFrame(renderFrame);
-                    } else {
-                        exportVideo1.pause();
-                        exportVideo2.pause();
-                        recorder.stop();
-                    }
+                    requestAnimationFrame(renderFrame);
                 }
 
                 requestAnimationFrame(renderFrame);
