@@ -162,19 +162,18 @@
                             <!-- Single video mode / Primary video in merge mode -->
                             <div id="video-wrapper" class="relative inline-block">
                                 <video id="video-player" class="rounded-t max-h-96"></video>
-                                <!-- Shot Streamer - Position dynamically controlled -->
-                                <!-- TODO Sub-Phase 2.6: Update to span merged video container in all layouts -->
-                                <div id="shot-overlay" class="absolute h-12 overflow-hidden pointer-events-none" style="display: none;">
-                                    <div id="ticker-container" class="flex gap-2 h-full items-center px-3 bg-gradient-to-r from-transparent via-black/40 to-black/60">
-                                        <!-- Shot items will be added dynamically here -->
-                                    </div>
-                                    <!-- Fixed timer for vertical layouts -->
-                                    <div id="fixed-timer" class="hidden absolute bottom-0 w-full px-2 pb-3 pointer-events-none"></div>
-                                </div>
                             </div>
                             <!-- Second video (hidden by default, shown in merge mode) -->
                             <div id="video-wrapper-2" class="hidden relative inline-block">
                                 <video id="video-player-2" class="rounded-t max-h-96"></video>
+                            </div>
+                            <!-- Shot Streamer - Spans entire merged video container -->
+                            <div id="shot-overlay" class="absolute h-12 overflow-hidden pointer-events-none" style="display: none; z-index: 20;">
+                                <div id="ticker-container" class="flex gap-2 h-full items-center px-3 bg-gradient-to-r from-transparent via-black/40 to-black/60">
+                                    <!-- Shot items will be added dynamically here -->
+                                </div>
+                                <!-- Fixed timer for vertical layouts -->
+                                <div id="fixed-timer" class="hidden absolute bottom-0 w-full px-2 pb-3 pointer-events-none"></div>
                             </div>
                         </div>
                         <!-- Custom video controls below video -->
@@ -646,25 +645,29 @@
             const overlay = document.getElementById('shot-overlay');
             const overlayRect = overlay.getBoundingClientRect();
 
-            // Element sizes
+            // Element sizes (measured from actual rendered elements)
             const timerSize = isVertical ? 50 : 80;
-            const shotSize = isVertical ? 50 : 100; // Actual element sizes with padding
+            const shotSize = isVertical ? 35 : 100; // Vertical: actual measured height ~32-35px including spacing
             const spacing = 8; // gap-2 = 0.5rem = 8px
             const padding = isVertical ? 16 : 24; // py-3 (12px top+12px bottom) or px-3
 
             let maxShots;
             if (isVertical) {
-                // Vertical: height = padding + timer + spacing + (shots * (shotSize + spacing))
+                // Vertical: timer is in fixed-timer (absolute, at bottom)
+                // Container has pt-2 (8px) and pb-14 (56px) for minimal spacing
+                // Spacing is handled by flex gap-2, so we calculate: (height - padding) / (shotSize + gap)
                 const availableHeight = overlayRect.height;
-                const usedHeight = padding + timerSize + spacing;
-                const availableForShots = availableHeight - usedHeight - padding;
-                maxShots = Math.floor(availableForShots / (shotSize + spacing));
+                const topPadding = 8; // pt-2
+                const bottomPadding = 56; // pb-14 (just enough for fixed-timer ~50px)
+                const availableForShots = availableHeight - topPadding - bottomPadding;
+                // Each shot takes shotSize height + spacing gap
+                maxShots = Math.floor((availableForShots + spacing) / (shotSize + spacing));
             } else {
                 // Horizontal: width = padding + timer + spacing + (shots * (shotSize + spacing))
                 const availableWidth = overlayRect.width;
                 const usedWidth = padding + timerSize + spacing;
                 const availableForShots = availableWidth - usedWidth - padding;
-                maxShots = Math.floor(availableForShots / (shotSize + spacing));
+                maxShots = Math.floor((availableForShots + spacing) / (shotSize + spacing));
             }
             maxShots = Math.max(1, Math.min(maxShots, latestShotIndex + 1)); // At least 1, at most all shots
 
@@ -744,15 +747,52 @@
         function setupTickerDimensions() {
             if (!videoElement) return;
 
-            // Wait for video to have actual dimensions
-            const width = videoElement.offsetWidth;
-            const height = videoElement.offsetHeight;
+            const overlay = document.getElementById('shot-overlay');
+            const controls = document.getElementById('custom-controls');
+            const wrapper1 = document.getElementById('video-wrapper');
+            const wrapper2 = document.getElementById('video-wrapper-2');
+
+            // Calculate merged dimensions based on layout mode
+            let width, height;
+            const video1Width = videoElement.offsetWidth;
+            const video1Height = videoElement.offsetHeight;
+
+            if (isMergeMode && secondVideoElement && secondVideoElement.src) {
+                const video2Width = secondVideoElement.offsetWidth;
+                const video2Height = secondVideoElement.offsetHeight;
+
+                switch(layoutMode) {
+                    case 'side-by-side':
+                        // Total width is both videos plus gap
+                        width = video1Width + video2Width + 8; // 8px gap (gap-2)
+                        height = Math.max(video1Height, video2Height);
+                        break;
+                    case 'above-below':
+                        // Total height is both videos plus gap
+                        width = Math.max(video1Width, video2Width);
+                        height = video1Height + video2Height + 8; // 8px gap (gap-2)
+                        break;
+                    case 'pip':
+                        // Use main video dimensions (considering swap)
+                        if (swapPositions) {
+                            // When swapped, video2 is main
+                            width = video2Width;
+                            height = video2Height;
+                        } else {
+                            // Normal, video1 is main
+                            width = video1Width;
+                            height = video1Height;
+                        }
+                        break;
+                }
+            } else {
+                // Single video mode
+                width = video1Width;
+                height = video1Height;
+            }
 
             if (width && height) {
-                const overlay = document.getElementById('shot-overlay');
-                const controls = document.getElementById('custom-controls');
-
-                // Match controls width to video width
+                // Match controls width to merged video area
                 controls.style.width = width + 'px';
 
                 applyStreamerPosition(overlay, width, height);
@@ -782,9 +822,8 @@
                     overlay.style.display = 'none';
                 } else {
                     overlay.style.display = '';
-                    const width = videoElement.offsetWidth;
-                    const height = videoElement.offsetHeight;
-                    applyStreamerPosition(overlay, width, height);
+                    // Recalculate dimensions using setupTickerDimensions logic
+                    setupTickerDimensions();
                 }
             }
 
@@ -830,7 +869,7 @@
                     overlay.style.width = '160px';
                     overlay.style.height = videoHeight + 'px';
                     overlay.className = 'absolute overflow-hidden pointer-events-none';
-                    container.className = 'flex flex-col-reverse gap-2 h-full justify-start py-3 px-2 bg-gradient-to-r from-black/60 via-black/40 to-transparent';
+                    container.className = 'flex flex-col-reverse gap-2 h-full justify-start pt-2 pb-14 px-2 bg-gradient-to-r from-black/60 via-black/40 to-transparent';
                     break;
 
                 case 'right':
@@ -839,7 +878,7 @@
                     overlay.style.width = '160px';
                     overlay.style.height = videoHeight + 'px';
                     overlay.className = 'absolute overflow-hidden pointer-events-none';
-                    container.className = 'flex flex-col-reverse gap-2 h-full justify-start py-3 px-2 bg-gradient-to-l from-black/60 via-black/40 to-transparent';
+                    container.className = 'flex flex-col-reverse gap-2 h-full justify-start pt-2 pb-14 px-2 bg-gradient-to-l from-black/60 via-black/40 to-transparent';
                     break;
             }
         }
@@ -2367,6 +2406,9 @@
                     wrapper2.classList.remove('hidden');
                     break;
             }
+
+            // Update shot streamer dimensions after layout change
+            setTimeout(() => setupTickerDimensions(), 100);
         }
 
         function toggleSwapPositions() {
