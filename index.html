@@ -1641,6 +1641,8 @@
                 streamerY = streamerPosition === 'top' ? 0 : canvasHeight - streamerH;
             }
 
+            console.log('Drawing streamer:', { streamerX, streamerY, streamerW, streamerH, isVertical });
+
             // Draw semi-transparent background
             ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
             ctx.fillRect(streamerX, streamerY, streamerW, streamerH);
@@ -1811,6 +1813,15 @@
                 progressText.textContent = 'Setting up recorder...';
                 progressBar.style.width = '5%';
 
+                console.log('Canvas setup:', {
+                    layoutMode,
+                    swapPositions,
+                    canvasWidth,
+                    canvasHeight,
+                    video1: { x: video1X, y: video1Y, w: video1W, h: video1H, originalW: video1Width, originalH: video1Height },
+                    video2: { x: video2X, y: video2Y, w: video2W, h: video2H, originalW: video2Width, originalH: video2Height }
+                });
+
                 // Create canvas
                 const canvas = document.createElement('canvas');
                 const ctx = canvas.getContext('2d', { alpha: false });
@@ -1977,9 +1988,21 @@
                     }
 
                     // Draw shot streamer overlay (if enabled and not 'none')
-                    if (streamerPosition !== 'none' && beep && shots.length > 0) {
-                        const currentTime = exportVideo1.currentTime * 1000;
-                        drawStreamerOnCanvas(ctx, canvasWidth, canvasHeight, currentTime, beep, shots);
+                    if (frameCount === 1) {
+                        console.log('Export debug:', {
+                            streamerPosition,
+                            hasBeep: !!beep,
+                            shotsLength: shots.length,
+                            canvasWidth,
+                            canvasHeight
+                        });
+                    }
+
+                    if (streamerPosition !== 'none') {
+                        if (beep && shots.length > 0) {
+                            const currentTime = exportVideo1.currentTime * 1000;
+                            drawStreamerOnCanvas(ctx, canvasWidth, canvasHeight, currentTime, beep, shots);
+                        }
                     }
 
                     frameCount++;
