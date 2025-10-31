@@ -1673,7 +1673,7 @@
                 const startIndex = Math.max(0, latestShotIndex - maxShots + 1);
 
                 let yOffset = streamerY + 45;
-                let xOffset = streamerX + streamerW / 2;
+                let xOffset = streamerX + 150; // Start after timer for horizontal
 
                 for (let i = startIndex; i <= latestShotIndex; i++) {
                     const shot = shots[i];
@@ -1691,8 +1691,8 @@
                         ctx.fillText(`${label}: ${splitTime}s`, streamerX + 10, yOffset);
                         yOffset += 30;
                     } else {
-                        ctx.fillText(`${label}: ${splitTime}s`, xOffset, streamerY + 30);
-                        xOffset += 100;
+                        ctx.fillText(`${label}: ${splitTime}s`, xOffset, streamerY + 50);
+                        xOffset += 150; // Increase spacing for readability
                     }
                 }
             }
@@ -1748,18 +1748,27 @@
 
                 switch(layoutMode) {
                     case 'side-by-side':
-                        canvasWidth = video1Width + video2Width;
+                        // Use the taller video's height as canvas height
                         canvasHeight = Math.max(video1Height, video2Height);
+
+                        // Scale both videos to match canvas height while maintaining aspect ratio
+                        video1H = canvasHeight;
+                        video1W = Math.floor(video1Width * (canvasHeight / video1Height));
+                        video2H = canvasHeight;
+                        video2W = Math.floor(video2Width * (canvasHeight / video2Height));
+
+                        canvasWidth = video1W + video2W;
+
                         if (swapPositions) {
                             video2X = 0;
-                            video2Y = (canvasHeight - video2Height) / 2;
-                            video1X = video2Width;
-                            video1Y = (canvasHeight - video1Height) / 2;
+                            video2Y = 0;
+                            video1X = video2W;
+                            video1Y = 0;
                         } else {
                             video1X = 0;
-                            video1Y = (canvasHeight - video1Height) / 2;
-                            video2X = video1Width;
-                            video2Y = (canvasHeight - video2Height) / 2;
+                            video1Y = 0;
+                            video2X = video1W;
+                            video2Y = 0;
                         }
                         break;
 
@@ -1820,6 +1829,12 @@
                     canvasHeight,
                     video1: { x: video1X, y: video1Y, w: video1W, h: video1H, originalW: video1Width, originalH: video1Height },
                     video2: { x: video2X, y: video2Y, w: video2W, h: video2H, originalW: video2Width, originalH: video2Height }
+                });
+
+                // IMPORTANT: Log this info to understand aspect ratio issues
+                console.log('Video aspect ratios:', {
+                    video1AR: (video1Width / video1Height).toFixed(3),
+                    video2AR: (video2Width / video2Height).toFixed(3)
                 });
 
                 // Create canvas
@@ -1979,9 +1994,11 @@
                     try {
                         if (exportVideo1.readyState >= 2 && !exportVideo1.ended) {
                             ctx.drawImage(exportVideo1, video1X, video1Y, video1W, video1H);
+                            if (frameCount === 1) console.log('Drew video1:', { video1X, video1Y, video1W, video1H });
                         }
                         if (exportVideo2.readyState >= 2 && !exportVideo2.ended) {
                             ctx.drawImage(exportVideo2, video2X, video2Y, video2W, video2H);
+                            if (frameCount === 1) console.log('Drew video2:', { video2X, video2Y, video2W, video2H });
                         }
                     } catch (err) {
                         console.error('Error drawing video frame:', err);
