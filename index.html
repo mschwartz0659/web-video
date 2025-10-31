@@ -1621,7 +1621,359 @@
             modal.classList.remove('hidden');
         }
 
+        function drawStreamerOnCanvas(ctx, canvasWidth, canvasHeight, currentTime, beep, shots) {
+            // This function draws the shot streamer overlay on the export canvas
+            // Similar to the live streamer but rendered directly on canvas
+
+            // Determine streamer dimensions and position based on streamerPosition
+            let streamerX, streamerY, streamerW, streamerH;
+            const isVertical = streamerPosition === 'left' || streamerPosition === 'right';
+
+            if (isVertical) {
+                streamerW = Math.floor(canvasWidth * 0.12);
+                streamerH = canvasHeight;
+                streamerY = 0;
+                streamerX = streamerPosition === 'left' ? 0 : canvasWidth - streamerW;
+            } else {
+                streamerW = canvasWidth;
+                streamerH = Math.floor(canvasHeight * 0.08);
+                streamerX = 0;
+                streamerY = streamerPosition === 'top' ? 0 : canvasHeight - streamerH;
+            }
+
+            // Draw semi-transparent background
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+            ctx.fillRect(streamerX, streamerY, streamerW, streamerH);
+
+            // Find latest passed shot
+            let latestShotIndex = -1;
+            for (let i = 0; i < shots.length; i++) {
+                if (currentTime >= shots[i].time) {
+                    latestShotIndex = i;
+                }
+            }
+
+            // Draw timer
+            let timerValue;
+            if (shots.length > 0 && currentTime > shots[shots.length - 1].time) {
+                timerValue = ((shots[shots.length - 1].time - beep.time) / 1000).toFixed(2);
+            } else {
+                timerValue = ((currentTime - beep.time) / 1000).toFixed(2);
+            }
+
+            ctx.fillStyle = '#1e40af';
+            ctx.font = 'bold 16px monospace';
+            ctx.fillText(`${timerValue}s`, streamerX + 10, streamerY + 25);
+
+            // Draw recent shots
+            if (latestShotIndex >= 0) {
+                const maxShots = isVertical ? 5 : 8;
+                const startIndex = Math.max(0, latestShotIndex - maxShots + 1);
+
+                let yOffset = streamerY + 45;
+                let xOffset = streamerX + streamerW / 2;
+
+                for (let i = startIndex; i <= latestShotIndex; i++) {
+                    const shot = shots[i];
+                    const splitTime = i === 0
+                        ? ((shot.time - beep.time) / 1000).toFixed(2)
+                        : ((shot.time - shots[i-1].time) / 1000).toFixed(2);
+
+                    const label = i === 0 ? 'Draw' : `Shot ${i+1}`;
+                    const isLatest = i === latestShotIndex;
+
+                    ctx.fillStyle = isLatest ? '#22c55e' : '#94a3b8';
+                    ctx.font = isLatest ? 'bold 14px sans-serif' : '12px sans-serif';
+
+                    if (isVertical) {
+                        ctx.fillText(`${label}: ${splitTime}s`, streamerX + 10, yOffset);
+                        yOffset += 30;
+                    } else {
+                        ctx.fillText(`${label}: ${splitTime}s`, xOffset, streamerY + 30);
+                        xOffset += 100;
+                    }
+                }
+            }
+        }
+
+        async function startMergedExport(format) {
+            const modal = document.getElementById('export-modal');
+            const modalContent = modal.querySelector('.bg-slate-800');
+            const progressContainer = document.getElementById('export-progress-container');
+            const progressBar = document.getElementById('export-progress-bar');
+            const progressText = document.getElementById('export-progress-text');
+
+            // Hide format choice UI
+            const textElement = modalContent.querySelector('.text-sm.text-slate-300');
+            const buttonsContainer = modalContent.querySelector('.space-y-3');
+            const cancelButton = modalContent.querySelector('button[onclick*="export-modal"]');
+
+            if (textElement) textElement.classList.add('hidden');
+            if (buttonsContainer) buttonsContainer.classList.add('hidden');
+            if (cancelButton) cancelButton.classList.add('hidden');
+
+            progressContainer.classList.remove('hidden');
+            progressBar.style.width = '0%';
+            progressText.textContent = 'Preparing merged export...';
+
+            try {
+                // Create export video elements
+                const exportVideo1 = document.createElement('video');
+                exportVideo1.src = videoElement.src;
+                exportVideo1.muted = true; // Will route audio based on selection
+                exportVideo1.crossOrigin = 'anonymous';
+
+                const exportVideo2 = document.createElement('video');
+                exportVideo2.src = secondVideoElement.src;
+                exportVideo2.muted = true;
+                exportVideo2.crossOrigin = 'anonymous';
+
+                // Wait for both videos to load
+                await Promise.all([
+                    new Promise(resolve => { exportVideo1.onloadedmetadata = resolve; }),
+                    new Promise(resolve => { exportVideo2.onloadedmetadata = resolve; })
+                ]);
+
+                // Calculate canvas dimensions based on layout
+                const video1Width = exportVideo1.videoWidth;
+                const video1Height = exportVideo1.videoHeight;
+                const video2Width = exportVideo2.videoWidth;
+                const video2Height = exportVideo2.videoHeight;
+
+                let canvasWidth, canvasHeight;
+                let video1X = 0, video1Y = 0, video1W = video1Width, video1H = video1Height;
+                let video2X = 0, video2Y = 0, video2W = video2Width, video2H = video2Height;
+
+                switch(layoutMode) {
+                    case 'side-by-side':
+                        canvasWidth = video1Width + video2Width;
+                        canvasHeight = Math.max(video1Height, video2Height);
+                        if (swapPositions) {
+                            video2X = 0;
+                            video2Y = (canvasHeight - video2Height) / 2;
+                            video1X = video2Width;
+                            video1Y = (canvasHeight - video1Height) / 2;
+                        } else {
+                            video1X = 0;
+                            video1Y = (canvasHeight - video1Height) / 2;
+                            video2X = video1Width;
+                            video2Y = (canvasHeight - video2Height) / 2;
+                        }
+                        break;
+
+                    case 'above-below':
+                        canvasWidth = Math.max(video1Width, video2Width);
+                        canvasHeight = video1Height + video2Height;
+                        if (swapPositions) {
+                            video2X = (canvasWidth - video2Width) / 2;
+                            video2Y = 0;
+                            video1X = (canvasWidth - video1Width) / 2;
+                            video1Y = video2Height;
+                        } else {
+                            video1X = (canvasWidth - video1Width) / 2;
+                            video1Y = 0;
+                            video2X = (canvasWidth - video2Width) / 2;
+                            video2Y = video1Height;
+                        }
+                        break;
+
+                    case 'pip':
+                        if (swapPositions) {
+                            // Video2 is main, Video1 is pip
+                            canvasWidth = video2Width;
+                            canvasHeight = video2Height;
+                            video2X = 0;
+                            video2Y = 0;
+                            video2W = video2Width;
+                            video2H = video2Height;
+                            // PIP in bottom-right at 35%
+                            video1W = Math.floor(video2Width * 0.35);
+                            video1H = Math.floor(video1Height * (video1W / video1Width));
+                            video1X = video2Width - video1W - 16;
+                            video1Y = video2Height - video1H - 16;
+                        } else {
+                            // Video1 is main, Video2 is pip
+                            canvasWidth = video1Width;
+                            canvasHeight = video1Height;
+                            video1X = 0;
+                            video1Y = 0;
+                            video1W = video1Width;
+                            video1H = video1Height;
+                            // PIP in bottom-right at 35%
+                            video2W = Math.floor(video1Width * 0.35);
+                            video2H = Math.floor(video2Height * (video2W / video2Width));
+                            video2X = video1Width - video2W - 16;
+                            video2Y = video1Height - video2H - 16;
+                        }
+                        break;
+                }
+
+                progressText.textContent = 'Setting up recorder...';
+                progressBar.style.width = '5%';
+
+                // Create canvas
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d', { alpha: false });
+                canvas.width = canvasWidth;
+                canvas.height = canvasHeight;
+
+                const stream = canvas.captureStream(30);
+
+                // Setup audio from selected source
+                const exportAudioContext = new AudioContext();
+                const audioSourceVideo = videoElement.muted ? exportVideo2 : exportVideo1;
+                const source = exportAudioContext.createMediaElementSource(audioSourceVideo);
+                const destination = exportAudioContext.createMediaStreamDestination();
+                source.connect(destination);
+
+                const audioTrack = destination.stream.getAudioTracks()[0];
+                if (audioTrack) {
+                    stream.addTrack(audioTrack);
+                }
+
+                // Setup MediaRecorder
+                const chunks = [];
+                let mimeType;
+                if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')) {
+                    mimeType = 'video/webm;codecs=vp9,opus';
+                } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
+                    mimeType = 'video/webm;codecs=vp9';
+                } else {
+                    mimeType = 'video/webm';
+                }
+
+                const recorder = new MediaRecorder(stream, {
+                    mimeType: mimeType,
+                    videoBitsPerSecond: 8000000
+                });
+
+                recorder.ondataavailable = (e) => {
+                    if (e.data.size > 0) {
+                        chunks.push(e.data);
+                    }
+                };
+
+                recorder.onstop = async () => {
+                    const blob = new Blob(chunks, { type: mimeType });
+
+                    if (format === 'webm') {
+                        progressText.textContent = 'Finalizing video...';
+                        progressBar.style.width = '95%';
+
+                        // Generate merged filename
+                        const video1Name = originalFilename || 'video1';
+                        const video2Name = secondVideoElement.src.split('/').pop().split('.')[0] || 'video2';
+                        const filename = `${video1Name}-vs-${video2Name}_uspsaml.webm`;
+
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = filename;
+                        a.click();
+
+                        progressBar.style.width = '100%';
+                        progressText.textContent = '✅ Merged WebM export complete!';
+
+                        setTimeout(() => {
+                            modal.classList.add('hidden');
+                            URL.revokeObjectURL(url);
+                        }, 1500);
+
+                        exportAudioContext.close();
+                        exportVideo1.remove();
+                        exportVideo2.remove();
+
+                    } else if (format === 'mp4') {
+                        progressText.textContent = 'Preparing for MP4 conversion...';
+                        progressBar.style.width = '50%';
+
+                        exportAudioContext.close();
+                        exportVideo1.remove();
+                        exportVideo2.remove();
+
+                        // Generate merged filename for MP4
+                        const video1Name = originalFilename || 'video1';
+                        const video2Name = secondVideoElement.src.split('/').pop().split('.')[0] || 'video2';
+                        const mergedFilename = `${video1Name}-vs-${video2Name}_uspsaml`;
+
+                        await convertWebMToMP4(blob, progressBar, progressText, mergedFilename);
+                    }
+                };
+
+                progressText.textContent = 'Rendering merged video...';
+                progressBar.style.width = '10%';
+
+                recorder.start(1000);
+
+                // Start both videos
+                exportVideo1.currentTime = 0;
+                exportVideo2.currentTime = syncOffset; // Apply sync offset
+                await Promise.all([exportVideo1.play(), audioSourceVideo.play()]);
+
+                const duration = Math.max(exportVideo1.duration, exportVideo2.duration - syncOffset);
+                const beep = markers.find(m => m.type === 'beep');
+                const shots = getMergedShots();
+
+                let frameCount = 0;
+                let lastProgressUpdate = 0;
+
+                function renderFrame() {
+                    // Clear canvas
+                    ctx.fillStyle = '#000000';
+                    ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+                    // Sync video2 with video1 + offset
+                    const targetTime2 = exportVideo1.currentTime + syncOffset;
+                    if (Math.abs(exportVideo2.currentTime - targetTime2) > 0.1) {
+                        exportVideo2.currentTime = targetTime2;
+                    }
+
+                    // Draw videos on canvas
+                    ctx.drawImage(exportVideo1, video1X, video1Y, video1W, video1H);
+                    ctx.drawImage(exportVideo2, video2X, video2Y, video2W, video2H);
+
+                    // Draw shot streamer overlay (if enabled and not 'none')
+                    if (streamerPosition !== 'none' && beep && shots.length > 0) {
+                        const currentTime = exportVideo1.currentTime * 1000;
+                        drawStreamerOnCanvas(ctx, canvasWidth, canvasHeight, currentTime, beep, shots);
+                    }
+
+                    frameCount++;
+                    const now = Date.now();
+                    if (now - lastProgressUpdate > 500) {
+                        const progress = (exportVideo1.currentTime / duration) * 100;
+                        progressBar.style.width = `${10 + (progress * 0.8)}%`;
+                        progressText.textContent = `Rendering: ${Math.floor(progress)}% (${exportVideo1.currentTime.toFixed(1)}s / ${duration.toFixed(1)}s)`;
+                        lastProgressUpdate = now;
+                    }
+
+                    if (exportVideo1.currentTime < duration && !exportVideo1.paused && !exportVideo1.ended) {
+                        requestAnimationFrame(renderFrame);
+                    } else {
+                        exportVideo1.pause();
+                        exportVideo2.pause();
+                        recorder.stop();
+                    }
+                }
+
+                requestAnimationFrame(renderFrame);
+
+            } catch (err) {
+                console.error('Merged export error:', err);
+                showError('Error exporting merged video: ' + err.message);
+                progressText.textContent = '❌ Export failed';
+                setTimeout(() => {
+                    modal.classList.add('hidden');
+                }, 2000);
+            }
+        }
+
         async function startExport(format) {
+            // Check if in merge mode - route to merged export
+            if (isMergeMode && secondVideoElement && secondVideoElement.src) {
+                return startMergedExport(format);
+            }
+
             const modalContent = document.getElementById('export-modal').querySelector('.bg-slate-800');
             const progressContainer = document.getElementById('export-progress-container');
             const progressBar = document.getElementById('export-progress-bar');
@@ -2123,7 +2475,7 @@
             ctx.restore();
         }
 
-        async function convertWebMToMP4(webmBlob, progressBar, progressText) {
+        async function convertWebMToMP4(webmBlob, progressBar, progressText, customFilename = null) {
             const modal = document.getElementById('export-modal');
 
             try {
@@ -2191,7 +2543,8 @@
                         const url = URL.createObjectURL(mp4Blob);
                         const a = document.createElement('a');
                         a.href = url;
-                        a.download = `${originalFilename}_uspsaml.mp4`;
+                        const filename = customFilename || originalFilename;
+                        a.download = `${filename}_uspsaml.mp4`;
                         a.click();
 
                         progressBar.style.width = '100%';
