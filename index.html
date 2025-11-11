@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>USPSA Shot Timer Analyzer - ML Powered</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="tailwind-play.js"></script>
 </head>
 <body class="bg-slate-900 text-white p-6">
     <div id="root" class="max-w-7xl mx-auto">
@@ -1623,79 +1623,202 @@
 
         function drawStreamerOnCanvas(ctx, canvasWidth, canvasHeight, currentTime, beep, shots) {
             // This function draws the shot streamer overlay on the export canvas
-            // Similar to the live streamer but rendered directly on canvas
+            // Matches the style of drawStreamerOverlay with badge backgrounds
+            ctx.save();
 
-            // Determine streamer dimensions and position based on streamerPosition
-            let streamerX, streamerY, streamerW, streamerH;
+            // Always recalculate dimensions (remove caching for now to avoid stale state)
             const isVertical = streamerPosition === 'left' || streamerPosition === 'right';
+            let overlayX, overlayY, overlayW, overlayH;
 
-            if (isVertical) {
-                streamerW = Math.floor(canvasWidth * 0.12);
-                streamerH = canvasHeight;
-                streamerY = 0;
-                streamerX = streamerPosition === 'left' ? 0 : canvasWidth - streamerW;
-            } else {
-                streamerW = canvasWidth;
-                streamerH = Math.floor(canvasHeight * 0.08);
-                streamerX = 0;
-                streamerY = streamerPosition === 'top' ? 0 : canvasHeight - streamerH;
+            if (streamerPosition === 'top') {
+                overlayX = 0;
+                overlayY = 0;
+                overlayW = canvasWidth;
+                overlayH = Math.floor(canvasHeight * 0.12);
+            } else if (streamerPosition === 'bottom') {
+                overlayX = 0;
+                overlayY = canvasHeight - Math.floor(canvasHeight * 0.12);
+                overlayW = canvasWidth;
+                overlayH = Math.floor(canvasHeight * 0.12);
+            } else if (streamerPosition === 'left') {
+                overlayX = 0;
+                overlayY = 0;
+                overlayW = Math.floor(canvasWidth * 0.08); // Reduced from 0.10 for tighter fit
+                overlayH = canvasHeight;
+            } else { // right
+                overlayX = canvasWidth - Math.floor(canvasWidth * 0.08); // Reduced from 0.10 for tighter fit
+                overlayY = 0;
+                overlayW = Math.floor(canvasWidth * 0.08); // Reduced from 0.10 for tighter fit
+                overlayH = canvasHeight;
             }
 
-            console.log('Drawing streamer:', { streamerX, streamerY, streamerW, streamerH, isVertical });
-
-            // Draw semi-transparent background
+            // Draw semi-transparent background (use solid color for better performance)
             ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
-            ctx.fillRect(streamerX, streamerY, streamerW, streamerH);
+            ctx.fillRect(overlayX, overlayY, overlayW, overlayH);
 
-            // Find latest passed shot
-            let latestShotIndex = -1;
+            // Find latest passed shot (optimized - break early)
+            let lastPassedIndex = -1;
             for (let i = 0; i < shots.length; i++) {
                 if (currentTime >= shots[i].time) {
-                    latestShotIndex = i;
+                    lastPassedIndex = i;
+                } else {
+                    break; // No need to check remaining shots
                 }
             }
 
+            // Calculate responsive font sizes (cache this too)
+            const baseFontSize = Math.floor(Math.min(canvasWidth, canvasHeight) * 0.025);
+
             // Draw timer
             let timerValue;
-            if (shots.length > 0 && currentTime > shots[shots.length - 1].time) {
+            if (lastPassedIndex === shots.length - 1 && currentTime > shots[shots.length - 1].time) {
                 timerValue = ((shots[shots.length - 1].time - beep.time) / 1000).toFixed(2);
             } else {
                 timerValue = ((currentTime - beep.time) / 1000).toFixed(2);
             }
 
-            ctx.fillStyle = '#1e40af';
-            ctx.font = 'bold 16px monospace';
-            ctx.fillText(`${timerValue}s`, streamerX + 10, streamerY + 25);
+            if (isVertical) {
+                // Vertical layout - timer at bottom, shots above scrolling upward
+                const itemHeight = Math.floor(canvasHeight * 0.05); // Increased from 0.04 to 0.05
+                const padding = Math.floor(overlayW * 0.08); // Increased from 0.05 for better spacing
 
-            // Draw recent shots
-            if (latestShotIndex >= 0) {
-                const maxShots = isVertical ? 5 : 8;
-                const startIndex = Math.max(0, latestShotIndex - maxShots + 1);
+                // Timer at bottom
+                const timerYPos = overlayY + overlayH - padding - itemHeight;
+                ctx.fillStyle = 'rgba(59, 130, 246, 0.95)';
+                ctx.fillRect(overlayX + padding, timerYPos, overlayW - 2 * padding, itemHeight);
+                ctx.fillStyle = 'white';
+                ctx.font = `bold ${baseFontSize * 1.2}px monospace`; // Increased from 1.0x to 1.2x
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(timerValue + 's', overlayX + overlayW / 2, timerYPos + itemHeight / 2);
 
-                let yOffset = streamerY + 45;
-                let xOffset = streamerX + 150; // Start after timer for horizontal
+                // Build list of shots to show: Draw (if passed), then recent shots that fit
+                const availableHeight = overlayH - padding - itemHeight - padding;
+                const itemSpacing = itemHeight + padding / 2;
+                const maxShots = Math.floor(availableHeight / itemSpacing);
 
-                for (let i = startIndex; i <= latestShotIndex; i++) {
-                    const shot = shots[i];
-                    const splitTime = i === 0
-                        ? ((shot.time - beep.time) / 1000).toFixed(2)
-                        : ((shot.time - shots[i-1].time) / 1000).toFixed(2);
+                const shotsToShow = [];
 
-                    const label = i === 0 ? 'Draw' : `Shot ${i+1}`;
-                    const isLatest = i === latestShotIndex;
+                // Only show Draw if it has been passed
+                if (lastPassedIndex >= 0) {
+                    shotsToShow.push(0);
+                }
 
-                    ctx.fillStyle = isLatest ? '#22c55e' : '#94a3b8';
-                    ctx.font = isLatest ? 'bold 14px sans-serif' : '12px sans-serif';
-
-                    if (isVertical) {
-                        ctx.fillText(`${label}: ${splitTime}s`, streamerX + 10, yOffset);
-                        yOffset += 30;
-                    } else {
-                        ctx.fillText(`${label}: ${splitTime}s`, xOffset, streamerY + 50);
-                        xOffset += 150; // Increase spacing for readability
+                if (maxShots > 1 && lastPassedIndex > 0) {
+                    const additionalSlots = maxShots - 1;
+                    const lastStart = Math.max(1, lastPassedIndex - additionalSlots + 1);
+                    for (let i = lastStart; i <= lastPassedIndex; i++) {
+                        shotsToShow.push(i);
                     }
                 }
+
+                // Draw shots from bottom to top
+                let yPos = timerYPos - itemHeight - padding / 2;
+
+                for (let i = 0; i < shotsToShow.length; i++) {
+                    const shotIdx = shotsToShow[i];
+                    const split = shotIdx === 0
+                        ? ((shots[0].time - beep.time) / 1000).toFixed(2)
+                        : ((shots[shotIdx].time - shots[shotIdx - 1].time) / 1000).toFixed(2);
+
+                    const label = shotIdx === 0 ? 'Draw' : `Shot ${shotIdx + 1}`;
+                    const isLatest = shotIdx === lastPassedIndex;
+
+                    if (yPos >= overlayY + padding) {
+                        // Draw background badge
+                        ctx.fillStyle = isLatest ? 'rgba(34, 197, 94, 0.95)' : 'rgba(0, 0, 0, 0.6)';
+                        ctx.fillRect(overlayX + padding, yPos, overlayW - 2 * padding, itemHeight);
+
+                        // Draw label on left
+                        ctx.fillStyle = isLatest ? 'white' : '#cbd5e1';
+                        ctx.font = `bold ${baseFontSize * 0.7}px monospace`; // Increased from 0.6 to 0.7
+                        ctx.textAlign = 'left';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText(label, overlayX + padding * 2, yPos + itemHeight / 2);
+
+                        // Draw split time on right
+                        ctx.font = `bold ${baseFontSize * 1.1}px monospace`; // Increased from 0.9 to 1.1
+                        ctx.textAlign = 'right';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText(split + 's', overlayX + overlayW - padding * 2, yPos + itemHeight / 2);
+                    }
+
+                    yPos -= itemHeight + padding / 2;
+                }
+            } else {
+                // Horizontal layout - timer first, then shots
+                const itemHeight = Math.floor(overlayH * 0.7); // Increased from 0.6 to 0.7
+                const padding = Math.floor(overlayH * 0.15); // Reduced to give more space to badges
+                const timerWidth = Math.floor(canvasWidth * 0.09); // Slightly increased
+                let xPos = overlayX + padding;
+                const yCenter = overlayY + overlayH / 2;
+
+                // Timer badge
+                ctx.fillStyle = 'rgba(59, 130, 246, 0.95)';
+                ctx.fillRect(xPos, yCenter - itemHeight / 2, timerWidth, itemHeight);
+                ctx.fillStyle = 'white';
+                ctx.font = `bold ${baseFontSize * 1.1}px monospace`; // Slightly larger
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(timerValue + 's', xPos + timerWidth / 2, yCenter);
+
+                xPos += timerWidth + padding;
+
+                // Calculate shot dimensions
+                const shotWidth = Math.floor(canvasWidth * 0.075); // Increased from 0.065 to 0.075
+                const shotSpacing = shotWidth + padding / 2;
+                const availableWidth = overlayW - (xPos - overlayX) - padding;
+                const maxShots = Math.floor(availableWidth / shotSpacing);
+
+                // Build list of shots to show: always Draw (if passed), then recent shots that fit
+                const shotsToShow = [];
+
+                // Only show Draw if it has been passed
+                if (lastPassedIndex >= 0) {
+                    shotsToShow.push(0);
+                }
+
+                if (maxShots > 1 && lastPassedIndex > 0) {
+                    const additionalSlots = maxShots - 1;
+                    const lastStart = Math.max(1, lastPassedIndex - additionalSlots + 1);
+                    for (let i = lastStart; i <= lastPassedIndex; i++) {
+                        shotsToShow.push(i);
+                    }
+                }
+
+                shotsToShow.forEach(shotIdx => {
+                    const split = shotIdx === 0
+                        ? ((shots[0].time - beep.time) / 1000).toFixed(2)
+                        : ((shots[shotIdx].time - shots[shotIdx - 1].time) / 1000).toFixed(2);
+
+                    const label = shotIdx === 0 ? 'Draw' : `Shot ${shotIdx + 1}`;
+                    const isLatest = shotIdx === lastPassedIndex;
+
+                    if (xPos + shotWidth < overlayX + overlayW - padding) {
+                        // Draw background badge
+                        ctx.fillStyle = isLatest ? 'rgba(34, 197, 94, 0.95)' : 'rgba(0, 0, 0, 0.6)';
+                        ctx.fillRect(xPos, yCenter - itemHeight / 2, shotWidth, itemHeight);
+
+                        ctx.fillStyle = isLatest ? 'white' : '#cbd5e1';
+
+                        // Draw label at top
+                        ctx.font = `bold ${baseFontSize * 0.65}px monospace`; // Increased from 0.55 to 0.65
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'top';
+                        ctx.fillText(label, xPos + shotWidth / 2, yCenter - itemHeight * 0.35);
+
+                        // Draw split time at bottom
+                        ctx.font = `bold ${baseFontSize * 1.0}px monospace`; // Increased from 0.9 to 1.0
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'bottom';
+                        ctx.fillText(split + 's', xPos + shotWidth / 2, yCenter + itemHeight * 0.35);
+
+                        xPos += shotWidth + padding / 2;
+                    }
+                });
             }
+
+            ctx.restore();
         }
 
         async function startMergedExport(format) {
@@ -1843,6 +1966,7 @@
                 canvas.width = canvasWidth;
                 canvas.height = canvasHeight;
 
+                // Use 30 FPS for balanced performance and smoothness
                 const stream = canvas.captureStream(30);
 
                 // Setup audio from selected source
@@ -1867,6 +1991,8 @@
                 } else {
                     mimeType = 'video/webm';
                 }
+
+                console.log('Using codec:', mimeType);
 
                 const recorder = new MediaRecorder(stream, {
                     mimeType: mimeType,
@@ -1955,7 +2081,14 @@
                 exportVideo1.muted = true;
                 exportVideo2.muted = true;
 
-                // Play both videos simultaneously
+                // Apply sync offset if manually adjusted
+                console.log('Export with syncOffset:', syncOffset);
+                if (syncOffset !== 0) {
+                    console.warn('WARNING: Manual sync offset adjustments are not yet supported in export. Export will use original video timing.');
+                    // TODO: Implement sync offset in export without causing performance issues
+                }
+
+                // Play both videos
                 await exportVideo1.play();
                 await exportVideo2.play();
 
@@ -1975,16 +2108,7 @@
                 recorder.start(1000);
 
                 function renderFrame() {
-                    if (!isRecording) return;
-
-                    // Check if we've reached the end
-                    if (exportVideo1.ended || exportVideo2.ended || exportVideo1.currentTime >= duration) {
-                        isRecording = false;
-                        exportVideo1.pause();
-                        exportVideo2.pause();
-                        recorder.stop();
-                        return;
-                    }
+                    const currentTime = exportVideo1.currentTime;
 
                     // Clear canvas
                     ctx.fillStyle = '#000000';
@@ -2017,17 +2141,29 @@
 
                     if (streamerPosition !== 'none') {
                         if (beep && shots.length > 0) {
-                            const currentTime = exportVideo1.currentTime * 1000;
-                            drawStreamerOnCanvas(ctx, canvasWidth, canvasHeight, currentTime, beep, shots);
+                            const currentTimeMs = currentTime * 1000;
+                            drawStreamerOnCanvas(ctx, canvasWidth, canvasHeight, currentTimeMs, beep, shots);
                         }
                     }
 
                     frameCount++;
+
+                    if (!isRecording) return;
+
+                    // Check if we've reached the end (with small buffer to avoid extra frames)
+                    if (exportVideo1.ended || exportVideo2.ended || currentTime >= duration - 0.1) {
+                        isRecording = false;
+                        exportVideo1.pause();
+                        exportVideo2.pause();
+                        recorder.stop();
+                        return;
+                    }
+
                     const now = Date.now();
                     if (now - lastProgressUpdate > 500) {
-                        const progress = (exportVideo1.currentTime / duration) * 100;
+                        const progress = (currentTime / duration) * 100;
                         progressBar.style.width = `${10 + (progress * 0.8)}%`;
-                        progressText.textContent = `Rendering: ${Math.floor(progress)}% (${exportVideo1.currentTime.toFixed(1)}s / ${duration.toFixed(1)}s)`;
+                        progressText.textContent = `Rendering: ${Math.floor(progress)}% (${currentTime.toFixed(1)}s / ${duration.toFixed(1)}s)`;
                         lastProgressUpdate = now;
                     }
 
@@ -2936,6 +3072,7 @@
                     const primaryBeepTime = markers.find(m => m.type === 'beep')?.time || 0;
                     const secondaryBeepTime = secondVideoData.beep_time * 1000;
                     syncOffset = (secondaryBeepTime - primaryBeepTime) / 1000; // Convert to seconds
+                    console.log('Auto-calculated syncOffset:', syncOffset, '| Primary beep:', primaryBeepTime, '| Secondary beep:', secondaryBeepTime);
 
                     // Auto-mirror all primary shots to secondary
                     const primaryShots = markers.filter(m => m.type === 'shot');
