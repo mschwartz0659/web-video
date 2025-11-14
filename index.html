@@ -350,6 +350,18 @@
                         seekBar.value = videoElement.currentTime;
                     }
                     document.getElementById('current-time-display').textContent = formatTime(videoElement.currentTime);
+
+                    // Continuously sync second video during playback to prevent drift
+                    if (isMergeMode && secondVideoElement && secondVideoElement.src && !videoElement.paused) {
+                        const targetTime = videoElement.currentTime + syncOffset;
+                        const currentSecondTime = secondVideoElement.currentTime;
+                        const drift = Math.abs(currentSecondTime - targetTime);
+
+                        // Only correct if drift exceeds 100ms to avoid constant micro-adjustments
+                        if (drift > 0.1) {
+                            secondVideoElement.currentTime = targetTime;
+                        }
+                    }
                 };
 
                 const handleSeekInput = () => {
@@ -1350,14 +1362,19 @@
             // Update sync offset display in waveform
             drawWaveform2();
 
-            // Reset both videos to the beginning for a fresh start
-            if (videoElement) {
-                videoElement.pause();
-                videoElement.currentTime = 0;
-            }
-            if (secondVideoElement) {
-                secondVideoElement.pause();
-                secondVideoElement.currentTime = 0;
+            // Pause both videos and reposition them based on new sync offset
+            if (videoElement) videoElement.pause();
+            if (secondVideoElement) secondVideoElement.pause();
+
+            // Position videos correctly based on new sync offset (same logic as initial load)
+            if (syncOffset >= 0) {
+                // Positive: video2 starts ahead
+                if (videoElement) videoElement.currentTime = 0;
+                if (secondVideoElement) secondVideoElement.currentTime = syncOffset;
+            } else {
+                // Negative: video1 starts ahead
+                if (videoElement) videoElement.currentTime = Math.abs(syncOffset);
+                if (secondVideoElement) secondVideoElement.currentTime = 0;
             }
 
             // Redraw waveforms to update playhead positions
@@ -1519,18 +1536,18 @@
         async function togglePlayPause() {
             if (!videoElement) return;
             if (videoElement.paused) {
-                // Sync second video BEFORE playing to avoid race condition
+                // Sync videos BEFORE playing to avoid race condition
                 if (isMergeMode && secondVideoElement && secondVideoElement.src) {
+                    // Handle both positive and negative offsets
                     const primaryTime = videoElement.currentTime;
                     const targetTime = primaryTime + syncOffset;
                     const currentSecondTime = secondVideoElement.currentTime;
                     const diff = Math.abs(currentSecondTime - targetTime);
 
-                    const needsSeek = diff > 0.01; // Very tight threshold to catch any drift
+                    const needsSeek = diff > 0.01;
 
                     if (needsSeek) {
-                        // Seek BOTH videos to ensure they go through the same seek operation
-                        // This is critical - when both videos seek, they stay in sync during playback
+                        // Seek BOTH videos to ensure they stay in sync during playback
                         videoElement.currentTime = primaryTime;
                         secondVideoElement.currentTime = targetTime;
 
@@ -2055,9 +2072,26 @@
                 progressText.textContent = 'Rendering merged video...';
                 progressBar.style.width = '10%';
 
-                // Start both videos and wait for them to be ready
-                exportVideo1.currentTime = 0;
-                exportVideo2.currentTime = syncOffset; // Apply sync offset
+                // Position videos based on sync offset (same logic as web playback)
+                let video1StartTime, video2StartTime;
+                if (syncOffset >= 0) {
+                    // Positive: video2 starts ahead
+                    video1StartTime = 0;
+                    video2StartTime = syncOffset;
+                } else {
+                    // Negative: video1 starts ahead
+                    video1StartTime = Math.abs(syncOffset);
+                    video2StartTime = 0;
+                }
+
+                exportVideo1.currentTime = video1StartTime;
+                exportVideo2.currentTime = video2StartTime;
+
+                console.log('Export positioning:', {
+                    syncOffset,
+                    video1StartTime,
+                    video2StartTime
+                });
 
                 // Wait for both videos to seek to start positions
                 await Promise.all([
@@ -2081,22 +2115,18 @@
                 exportVideo1.muted = true;
                 exportVideo2.muted = true;
 
-                // Apply sync offset if manually adjusted
-                console.log('Export with syncOffset:', syncOffset);
-                if (syncOffset !== 0) {
-                    console.warn('WARNING: Manual sync offset adjustments are not yet supported in export. Export will use original video timing.');
-                    // TODO: Implement sync offset in export without causing performance issues
-                }
-
-                // Play both videos
+                // Play both videos from their start positions
                 await exportVideo1.play();
                 await exportVideo2.play();
 
                 // Unmute the audio source after both are playing
                 audioSourceVideo.muted = false;
 
-                // Calculate actual duration - use shortest video duration
-                const duration = Math.min(exportVideo1.duration, exportVideo2.duration);
+                // Calculate duration accounting for which video starts ahead
+                const duration = Math.min(
+                    exportVideo1.duration - video1StartTime,
+                    exportVideo2.duration - video2StartTime
+                );
                 const beep = markers.find(m => m.type === 'beep');
                 const shots = getMergedShots();
 
@@ -2108,7 +2138,10 @@
                 recorder.start(1000);
 
                 function renderFrame() {
+                    // Use absolute video1 time for streamer overlay (beep/shots are in absolute time)
                     const currentTime = exportVideo1.currentTime;
+                    // Calculate elapsed time for duration checking
+                    const elapsedTime = currentTime - video1StartTime;
 
                     // Clear canvas
                     ctx.fillStyle = '#000000';
@@ -2128,14 +2161,16 @@
                         console.error('Error drawing video frame:', err);
                     }
 
-                    // Draw shot streamer overlay (if enabled and not 'none')
+                    // Draw shot streamer overlay using absolute video1 time
                     if (frameCount === 1) {
                         console.log('Export debug:', {
                             streamerPosition,
                             hasBeep: !!beep,
                             shotsLength: shots.length,
                             canvasWidth,
-                            canvasHeight
+                            canvasHeight,
+                            currentTime,
+                            elapsedTime
                         });
                     }
 
@@ -2150,8 +2185,8 @@
 
                     if (!isRecording) return;
 
-                    // Check if we've reached the end (with small buffer to avoid extra frames)
-                    if (exportVideo1.ended || exportVideo2.ended || currentTime >= duration - 0.1) {
+                    // Check if we've reached the end using elapsed time
+                    if (exportVideo1.ended || exportVideo2.ended || elapsedTime >= duration - 0.1) {
                         isRecording = false;
                         exportVideo1.pause();
                         exportVideo2.pause();
@@ -2161,9 +2196,9 @@
 
                     const now = Date.now();
                     if (now - lastProgressUpdate > 500) {
-                        const progress = (currentTime / duration) * 100;
+                        const progress = (elapsedTime / duration) * 100;
                         progressBar.style.width = `${10 + (progress * 0.8)}%`;
-                        progressText.textContent = `Rendering: ${Math.floor(progress)}% (${currentTime.toFixed(1)}s / ${duration.toFixed(1)}s)`;
+                        progressText.textContent = `Rendering: ${Math.floor(progress)}% (${elapsedTime.toFixed(1)}s / ${duration.toFixed(1)}s)`;
                         lastProgressUpdate = now;
                     }
 
@@ -3142,7 +3177,18 @@
                 // Show second video with selected layout
                 applyVideoLayout();
 
-                // Draw waveforms (don't sync position yet - let both start at 0:00)
+                // Position videos correctly based on sync offset to avoid jump on first play
+                if (syncOffset >= 0) {
+                    // Positive: video2 starts ahead
+                    videoElement.currentTime = 0;
+                    secondVideoElement.currentTime = syncOffset;
+                } else {
+                    // Negative: video1 starts ahead
+                    videoElement.currentTime = Math.abs(syncOffset);
+                    secondVideoElement.currentTime = 0;
+                }
+
+                // Draw waveforms after positioning
                 const drawWaveforms = () => {
                     drawWaveform();
                     drawWaveform2();
